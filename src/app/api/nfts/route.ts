@@ -192,9 +192,12 @@ export async function GET(req: NextRequest) {
       const result = await fetchNFTsViaOpenSea(address, openSeaKey, ethPrice)
       return NextResponse.json(result)
     } catch (e) {
-      console.error('[nfts] opensea error:', e instanceof Error ? e.message : e)
-      // Fall through to Blockscout
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('[nfts] opensea error:', msg)
+      return NextResponse.json({ debug: 'opensea_failed', error: msg, fallback: 'blockscout' })
     }
+  } else {
+    return NextResponse.json({ debug: 'no_api_key', hint: 'OPENSEA_API_KEY not found in env' })
   }
 
   // ── PATH 2: Blockscout + on-chain RPC (no API key needed) ──────────────────
