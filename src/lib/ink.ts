@@ -173,9 +173,13 @@ export async function getEthPriceData(): Promise<EthPriceData> {
 
   ethPriceInflight = (async () => {
     try {
+      const apiKey = process.env.COINGECKO_API_KEY
+      const headers: Record<string, string> = { 'Accept': 'application/json' }
+      if (apiKey) headers['x-cg-demo-api-key'] = apiKey
+
       const res = await fetch(
         'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true',
-        { next: { revalidate: 60 } },
+        { headers, next: { revalidate: 60 } },
       )
       const d         = await res.json()
       const price     = (d?.ethereum?.usd as number) ?? 0

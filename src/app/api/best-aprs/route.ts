@@ -160,7 +160,10 @@ async function fetchVeloPrice(): Promise<number> {
     }
   } catch { /* fall through */ }
   try {
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=velodrome-finance&vs_currencies=usd', { signal: AbortSignal.timeout(8_000) })
+    const cgHeaders: Record<string, string> = { 'Accept': 'application/json' }
+    const cgKey = process.env.COINGECKO_API_KEY
+    if (cgKey) cgHeaders['x-cg-demo-api-key'] = cgKey
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=velodrome-finance&vs_currencies=usd', { headers: cgHeaders, signal: AbortSignal.timeout(8_000) })
     if (res.ok) {
       const price = (await res.json())?.['velodrome-finance']?.usd ?? 0
       if (price > 0) { return price }
