@@ -196,48 +196,8 @@ export async function GET(req: NextRequest) {
       console.error('[nfts] opensea error:', msg)
       return NextResponse.json({ debug: 'opensea_failed', error: msg, fallback: 'blockscout' })
     }
-  } else {
-    return NextResponse.json({ debug: 'no_api_key', hint: 'OPENSEA_API_KEY not found in env' })
   }
 
-  // ── PATH 2: Blockscout + on-chain RPC (no API key needed) ──────────────────
-  try {
-    const candidates = await discoverNFTsViaBlockscout(address)
-    if (!candidates.length) return NextResponse.json({ nfts: [], nftValue: 0, total: 0 })
-
-    const owned = await verifyOwnership(candidates, address)
-    if (!owned.length) return NextResponse.json({ nfts: [], nftValue: 0, total: 0 })
-
-    const cap   = owned.slice(0, 20)
-    const total = owned.length
-    const { cMeta, uriRes } = await fetchOnChainMeta(cap)
-    const ethPrice = await getEthPrice()
-
-    const metaResults = await Promise.all(
-      cap.map((_, i) => fetchTokenMeta(decodeString(uriRes[i]?.result ?? '')))
-    )
-
-    const nfts = cap.map(({ contract, tokenId }, i) => {
-      const cm         = cMeta[contract] ?? { name: '', symbol: '' }
-      const meta       = metaResults[i]
-      const collection = cm.name || cm.symbol || `${contract.slice(0, 6)}...${contract.slice(-4)}`
-      return {
-        id:          `${contract}_${tokenId}`,
-        contract,
-        tokenId:     tokenId.toString(),
-        collection,
-        symbol:      cm.symbol,
-        name:        meta?.name ?? `${collection} #${tokenId}`,
-        image:       sanitizeImage(meta?.image),
-        floorETH:    0,
-        floorUSD:    0,
-        openSeaUrl:  `https://opensea.io/assets/${OPENSEA_CHAIN}/${contract}/${tokenId}`,
-      }
-    })
-
-    return NextResponse.json({ nfts, nftValue: 0, total })
-  } catch (err: any) {
-    console.error('[nfts] blockscout/rpc error:', err?.message)
-    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
-  }
+  // No OpenSea key — return debug info
+  return NextResponse.json({ debug: 'no_api_key', hint: 'OPENSEA_API_KEY not found in env' })
 }
