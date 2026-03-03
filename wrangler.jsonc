@@ -7,6 +7,12 @@
     "nodejs_compat",
     "global_fetch_strictly_public"
   ],
+  "routes": [
+    {
+      "pattern": "inkboard.pro",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
