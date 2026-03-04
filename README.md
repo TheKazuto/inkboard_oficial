@@ -1,8 +1,8 @@
-# MonadBoard 🟣
+# Ink Board 🟣
 
-> The ultimate portfolio dashboard for the Monad ecosystem.
+> The ultimate portfolio dashboard for the Ink ecosystem.
 
-MonadBoard is a central dashboard for Monad users to track their wallet, DeFi positions, NFTs, and transaction history in real-time. Built with Next.js, deployed on Vercel.
+InkBoard is a central dashboard for Ink users to track their wallet, DeFi positions, NFTs, and transaction history in real-time. Built with Next.js, deployed on Vercel.
 
 ---
 
@@ -10,14 +10,14 @@ MonadBoard is a central dashboard for Monad users to track their wallet, DeFi po
 
 - **Portfolio Overview** — Total wallet value in USD (tokens + NFTs), 24h change
 - **Token Allocation** — Pie chart with % exposure per token
-- **DeFi Positions** — Active positions across Monad protocols (liquidity pools, lending, staking)
+- **DeFi Positions** — Active positions across Ink protocols (liquidity pools, lending, staking)
 - **Transaction History** — Full history with filtering by type (receive, send, swap, DeFi, NFT)
 - **Portfolio History Chart** — Up to 1 year of historical portfolio value
-- **Top Monad Tokens** — Top 10 by market cap
+- **Top Ink Tokens** — Top 10 by market cap
 - **Fear & Greed Index** — Crypto market sentiment
 - **Wallet Monitoring** — Watch other wallets and track their activity *(NFT gated)*
 - **Telegram Bot Alerts** — Real-time notifications for wallet activity *(NFT gated)*
-- **NFT Gating System** — Unlock premium features by holding a MonadBoard NFT
+- **NFT Gating System** — Unlock premium features by holding a InkBoard NFT
 - **Sponsors Area** — Partner/sponsor banners
 - **Mobile Responsive** — Works on all screen sizes
 
@@ -40,8 +40,8 @@ MonadBoard is a central dashboard for Monad users to track their wallet, DeFi po
 | Data | API |
 |------|-----|
 | Token prices & market data | [CoinGecko API](https://www.coingecko.com/api) |
-| NFT floor prices & metadata | [MagicEden API](https://docs.magiceden.io) |
-| On-chain data (balances, txs) | Monad RPC |
+| NFT floor prices & metadata | [Opensea API](https://docs.opensea.io/reference/api-overview) |
+| On-chain data (balances, txs) | Ink RPC |
 | Fear & Greed Index | [CryptoRank](https://cryptorank.io/charts/fear-and-greed) |
 
 ---
@@ -55,8 +55,8 @@ MonadBoard is a central dashboard for Monad users to track their wallet, DeFi po
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/monad-dashboard.git
-cd monad-dashboard
+git clone https://github.com/yourusername/inkboard_oficial.git
+cd inkboard_oficial
 npm install
 npm run dev
 ```
@@ -69,16 +69,16 @@ Create a `.env.local` file:
 
 ```env
 # CoinGecko API
-NEXT_PUBLIC_COINGECKO_API_KEY=your_key_here
+COINGECKO_API_KEY=your_key_here
 
-# MagicEden API
-NEXT_PUBLIC_MAGICEDEN_API_KEY=your_key_here
+# OPENSEA API
+OPENSEA_API_KEY=your_key_here
 
-# Monad RPC
-NEXT_PUBLIC_MONAD_RPC_URL=https://rpc.monad.xyz
+# Ink RPC
+NEXT_PUBLIC_INK_RPC_URL=https://rpc-gel.inkonchain.com
 
-# MonadBoard NFT Contract (fill when collection launches)
-NEXT_PUBLIC_MONADBOARD_NFT_CONTRACT=0x...
+# InkBoard NFT Contract (fill when collection launches)
+NEXT_PUBLIC_INKBOARD_NFT_CONTRACT=0x...
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN=your_token_here
@@ -100,7 +100,7 @@ src/
 │   └── globals.css           # Global styles + design tokens
 ├── components/
 │   ├── Navbar.tsx            # Top navigation + wallet connect
-│   └── BottomBar.tsx         # Fixed bottom bar (MON price + socials)
+│   └── BottomBar.tsx         # Fixed bottom bar (ETH price + socials)
 └── lib/
     └── mockData.ts           # Mock data (replace with real API calls)
 ```
@@ -120,8 +120,8 @@ src/
 
 - [ ] Real wallet integration (RainbowKit)
 - [ ] Live CoinGecko API integration
-- [ ] MagicEden NFT API integration
-- [ ] Monad RPC on-chain data
+- [ ] Opensea NFT API integration
+- [ ] Ink RPC on-chain data
 - [ ] Telegram bot backend (Railway/Render)
 - [ ] NFT contract gating (when collection launches)
 - [ ] More DeFi protocol integrations
@@ -132,4 +132,4 @@ src/
 
 ## License
 
-MIT — Built for the Monad ecosystem 🟣
+MIT — Built for the Ink ecosystem 🟣
