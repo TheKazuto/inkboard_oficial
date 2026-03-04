@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { encodeFunctionData, decodeFunctionResult, type Abi } from 'viem'
+import { INK_RPC } from '@/lib/ink'
+import { kvGet, kvSet } from '@/lib/kvCache'
 
 export const revalidate = 0
 
@@ -49,7 +51,6 @@ function inferType(project: string, poolMeta: string | null): 'pool' | 'vault' |
 
 // ─── Velodrome on Ink (chain 57073) ─────────────────────────────────────────
 const VOTER_INK    = '0x97cDBCe21B6fd0585d29E539B1B99dAd328a1123' as const
-const INK_RPC      = 'https://rpc-gel.inkonchain.com'
 const INK_RPC_ALT  = 'https://ink.drpc.org'
 const VELO_URL     = 'https://velodrome.finance/liquidity?chain=57073'
 const GECKO_BASE   = 'https://api.geckoterminal.com/api/v2'
@@ -337,9 +338,12 @@ async function fetchDefiLlama(): Promise<AprEntry[]> {
 }
 
 // ─── Cache + GET ────────────────────────────────────────────────────────────
-const CACHE_TTL = 3 * 60 * 1000
-interface CacheEntry { data: AprEntry[]; fetchedAt: number }
-let cache: CacheEntry | null = null
+
+const SOFT_TTL = 3 * 60 * 1000   // 3 minutes (ms) — consider stale after this
+const HARD_TTL = 10 * 60         // 10 minutes (seconds) — KV auto-deletes
+
+// Inflight dedup stays in-memory — prevents concurrent upstream fetches
+// within the same isolate (still useful even if cache is in KV)
 let inflight: Promise<AprEntry[]> | null = null
 
 async function fetchAllAprs(): Promise<AprEntry[]> {
@@ -356,17 +360,21 @@ async function fetchAllAprs(): Promise<AprEntry[]> {
 }
 
 export async function GET() {
-  const now = Date.now()
-  if (cache && now - cache.fetchedAt < CACHE_TTL)
-    return NextResponse.json(cache.data, { headers: { 'X-Cache': 'HIT', 'Cache-Control': 'public, max-age=60' } })
+  const cached = await kvGet<AprEntry[]>('best-aprs', SOFT_TTL)
+
+  if (cached.data && cached.fresh) {
+    return NextResponse.json(cached.data, { headers: { 'X-Cache': 'HIT', 'Cache-Control': 'public, max-age=60' } })
+  }
+
   if (!inflight) inflight = fetchAllAprs().finally(() => { inflight = null })
+
   try {
     const data = await inflight
-    cache = { data, fetchedAt: now }
+    await kvSet('best-aprs', data, HARD_TTL)
     return NextResponse.json(data, { headers: { 'X-Cache': 'MISS', 'Cache-Control': 'public, max-age=60' } })
   } catch (e) {
     console.error('[best-aprs] Fatal:', e)
-    if (cache) return NextResponse.json(cache.data, { headers: { 'X-Cache': 'STALE' } })
+    if (cached.data) return NextResponse.json(cached.data, { headers: { 'X-Cache': 'STALE' } })
     return NextResponse.json([], { status: 502 })
   }
 }
