@@ -11,10 +11,6 @@
     {
       "pattern": "inkboard.pro",
       "custom_domain": true
-    },
-    {
-      "pattern": "www.inkboard.pro",
-      "custom_domain": true
     }
   ],
   "assets": {
