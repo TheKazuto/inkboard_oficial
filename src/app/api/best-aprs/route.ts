@@ -303,9 +303,14 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── DefiLlama (Tydro + Curve on Ink) ───────────────────────────────────────
-// Only fetches Tydro and Curve — Velodrome and InkySwap are handled directly above
-const LLAMA_SLUGS = new Set(['tydro', 'curve-dex'])
+// ─── DefiLlama (ALL Ink protocols including Velodrome) ──────────────────────
+// DefiLlama is the PRIMARY source for Velodrome because GeckoTerminal
+// rate-limits on cold start (3 concurrent requests → 429).
+// When GeckoTerminal succeeds, its data replaces DefiLlama's (more granular).
+const LLAMA_SLUGS = new Set([
+  'tydro', 'curve-dex',
+  'velodrome-v2', 'velodrome-v3', 'velodrome',
+])
 
 async function fetchDefiLlama(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
@@ -347,14 +352,28 @@ const HARD_TTL = 10 * 60         // 10 minutes (seconds) — KV auto-deletes
 let inflight: Promise<AprEntry[]> | null = null
 
 async function fetchAllAprs(): Promise<AprEntry[]> {
+  // DefiLlama + InkySwap are reliable — always fetch them.
+  // GeckoTerminal Velodrome is optional enrichment (rate-limits on cold start).
   const [v, i, l] = await Promise.allSettled([fetchVelodromeData(), fetchInkySwapData(), fetchDefiLlama()])
-  const velo  = v.status === 'fulfilled' ? v.value : []
-  const inky  = i.status === 'fulfilled' ? i.value : []
-  const llama = l.status === 'fulfilled' ? l.value : []
-  if (v.status === 'rejected') console.error('[best-aprs] Velodrome failed:', v.reason)
+  const geckoVelo = v.status === 'fulfilled' ? v.value : []
+  const inky      = i.status === 'fulfilled' ? i.value : []
+  const llama     = l.status === 'fulfilled' ? l.value : []
+  if (v.status === 'rejected') console.error('[best-aprs] Velodrome/Gecko failed:', v.reason)
   if (i.status === 'rejected') console.error('[best-aprs] InkySwap failed:', i.reason)
   if (l.status === 'rejected') console.error('[best-aprs] DefiLlama failed:', l.reason)
-  const all = [...velo, ...inky, ...llama]
+
+  // Split DefiLlama results: Velodrome entries vs others (Tydro, Curve)
+  const llamaVelo  = llama.filter(e => e.protocol.startsWith('Velodrome'))
+  const llamaOther = llama.filter(e => !e.protocol.startsWith('Velodrome'))
+
+  // Use GeckoTerminal Velodrome data if available (more granular per-pool),
+  // otherwise fall back to DefiLlama Velodrome data (always available)
+  const veloData = geckoVelo.length > 0 ? geckoVelo : llamaVelo
+  if (geckoVelo.length === 0 && llamaVelo.length > 0) {
+    console.warn(`[best-aprs] GeckoTerminal empty, using ${llamaVelo.length} DefiLlama Velodrome pools`)
+  }
+
+  const all = [...veloData, ...inky, ...llamaOther]
   all.sort((a, b) => b.apr - a.apr || b.tvl - a.tvl)
   return all
 }
