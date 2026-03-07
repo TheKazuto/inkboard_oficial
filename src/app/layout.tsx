@@ -28,7 +28,16 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Prevent flash of wrong theme — runs before React hydration */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          try {
+            var t = localStorage.getItem('mb_theme');
+            if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+          } catch(e) {}
+        ` }} />
+      </head>
       <body className="min-h-screen" style={{ background: 'var(--ink-bg)' }}>
         {ADSENSE_CLIENT && (
           <Script
