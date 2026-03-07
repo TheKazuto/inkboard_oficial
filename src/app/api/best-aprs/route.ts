@@ -33,6 +33,8 @@ function allStable(tokens: string[]): boolean {
 }
 
 // ─── Protocol metadata (DefiLlama project slug → display info) ──────────────
+const NADO_LOGO = '/nado-logo.jpg'
+
 const PROTOCOL_META: Record<string, { name: string; logo: string; urlBase: string }> = {
   'velodrome-v3':   { name: 'Velodrome V3', logo: 'https://icons.llamao.fi/icons/protocols/velodrome-v2?w=48&h=48', urlBase: 'https://velodrome.finance/liquidity?filters=Ink' },
   'velodrome-v2':   { name: 'Velodrome V2', logo: 'https://icons.llamao.fi/icons/protocols/velodrome-v2?w=48&h=48', urlBase: 'https://velodrome.finance/liquidity?filters=Ink' },
@@ -40,12 +42,13 @@ const PROTOCOL_META: Record<string, { name: string; logo: string; urlBase: strin
   'curve-dex':      { name: 'Curve',        logo: 'https://icons.llamao.fi/icons/protocols/curve-dex?w=48&h=48',    urlBase: 'https://curve.fi/#/ink/pools' },
   'tydro':          { name: 'Tydro',        logo: 'https://icons.llamao.fi/icons/protocols/tydro?w=48&h=48',       urlBase: 'https://app.tydro.com' },
   'inkyswap':       { name: 'InkySwap',     logo: 'https://icons.llamao.fi/icons/protocols/inkyswap?w=48&h=48',    urlBase: 'https://inkyswap.com/liquidity' },
+  'nado':           { name: 'Nado',         logo: NADO_LOGO,                                                       urlBase: 'https://app.nado.xyz/vault' },
 }
 
 function inferType(project: string, poolMeta: string | null): 'pool' | 'vault' | 'lend' {
   const p = project.toLowerCase(), m = (poolMeta ?? '').toLowerCase()
   if (p.includes('tydro') || m.includes('lend') || m.includes('supply') || m.includes('borrow')) return 'lend'
-  if (m.includes('vault') || m.includes('auto')) return 'vault'
+  if (p.includes('nado') || m.includes('vault') || m.includes('auto') || m.includes('nlp')) return 'vault'
   return 'pool'
 }
 
@@ -303,14 +306,99 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── DefiLlama (ALL Ink protocols including Velodrome) ──────────────────────
-// DefiLlama is the PRIMARY source for Velodrome because GeckoTerminal
-// rate-limits on cold start (3 concurrent requests → 429).
-// When GeckoTerminal succeeds, its data replaces DefiLlama's (more granular).
-const LLAMA_SLUGS = new Set([
-  'tydro', 'curve-dex',
-  'velodrome-v2', 'velodrome-v3', 'velodrome',
-])
+// ─── Nado NLP Vault (direct from Nado API) ──────────────────────────────────
+// TVL from nlp_pool_info, APR from archive nlp_snapshots (30-day rolling).
+const NADO_GATEWAY = 'https://gateway.prod.nado.xyz'
+const NADO_ARCHIVE = 'https://archive.prod.nado.xyz/v1'
+
+async function fetchNadoVault(): Promise<AprEntry[]> {
+  try {
+    const headers = { Accept: 'application/json', 'Accept-Encoding': 'gzip', 'Content-Type': 'application/json' }
+    const now = Math.floor(Date.now() / 1000)
+    const thirtyDaysAgo = now - 30 * 86400
+
+    // Fetch current pool info + current snapshot + 30-day-ago snapshot in parallel
+    const [poolRes, snapNowRes, snapOldRes] = await Promise.all([
+      fetch(`${NADO_GATEWAY}/v1/query?type=nlp_pool_info`, {
+        headers, signal: AbortSignal.timeout(10_000),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+      // Latest snapshot (current NLP price)
+      fetch(NADO_ARCHIVE, {
+        method: 'POST', headers, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ nlp_snapshots: { limit: 1 } }),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+      // Snapshot from ~30 days ago
+      fetch(NADO_ARCHIVE, {
+        method: 'POST', headers, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ nlp_snapshots: { max_time: thirtyDaysAgo, limit: 1 } }),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ])
+
+    const pools = poolRes?.data?.nlp_pools ?? []
+    if (pools.length === 0) return []
+
+    // Extract NLP supply from pool info for TVL
+    let nlpSupply = 0, nlpPriceFromPool = 0
+    for (const pool of pools) {
+      for (const sp of (pool.subaccount_info?.spot_products ?? [])) {
+        if (sp.product_id === 11) {
+          nlpSupply       = parseFloat(sp.state?.total_deposits_normalized ?? '0') / 1e18
+          nlpPriceFromPool = parseFloat(sp.oracle_price_x18 ?? '0') / 1e18
+          break
+        }
+      }
+      if (nlpSupply > 0) break
+    }
+
+    // Get TVL directly from latest snapshot (more accurate) or fallback to supply × price
+    const latestSnap = (snapNowRes?.snapshots ?? [])[0]
+    const totalTVL = latestSnap
+      ? parseFloat(latestSnap.tvl ?? '0') / 1e18
+      : nlpSupply * nlpPriceFromPool
+    if (totalTVL < 100) return []
+
+    // Calculate 30-day rolling APR from NLP price snapshots
+    let apr = 0
+    const currentPrice = latestSnap
+      ? parseFloat(latestSnap.oracle_price_x18 ?? '0') / 1e18
+      : nlpPriceFromPool
+    const oldSnap = (snapOldRes?.snapshots ?? [])[0]
+    if (oldSnap) {
+      const oldPrice = parseFloat(oldSnap.oracle_price_x18 ?? '0') / 1e18
+      if (oldPrice > 0 && currentPrice > oldPrice) {
+        // Exact days between snapshots
+        const oldTs = parseInt(oldSnap.timestamp ?? '0')
+        const newTs = latestSnap ? parseInt(latestSnap.timestamp ?? '0') : now
+        const daysBetween = Math.max(1, (newTs - oldTs) / 86400)
+        const yieldPeriod = (currentPrice - oldPrice) / oldPrice
+        apr = yieldPeriod * (365 / daysBetween) * 100
+      }
+    }
+
+    // Fallback: inception-based if snapshots didn't produce a result
+    if (apr <= 0 && currentPrice > 1.0) {
+      const LAUNCH = new Date('2025-11-20').getTime()
+      const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
+      apr = (currentPrice - 1.0) * (365 / daysSinceLaunch) * 100
+    }
+
+    return [{
+      protocol: 'Nado',
+      logo: NADO_LOGO,
+      url: 'https://app.nado.xyz/vault',
+      tokens: ['USDT0'],
+      label: 'NLP Vault',
+      apr: Math.round(apr * 100) / 100,
+      tvl: totalTVL,
+      type: 'vault',
+      isStable: false,
+    }]
+  } catch (e) { console.error('[best-aprs] Nado error:', e); return [] }
+}
+
+// ─── DefiLlama (Tydro + Curve on Ink) ───────────────────────────────────────
+// Only fetches Tydro and Curve — Velodrome and InkySwap are handled directly above
+const LLAMA_SLUGS = new Set(['tydro', 'curve-dex'])
 
 async function fetchDefiLlama(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
@@ -352,28 +440,16 @@ const HARD_TTL = 10 * 60         // 10 minutes (seconds) — KV auto-deletes
 let inflight: Promise<AprEntry[]> | null = null
 
 async function fetchAllAprs(): Promise<AprEntry[]> {
-  // DefiLlama + InkySwap are reliable — always fetch them.
-  // GeckoTerminal Velodrome is optional enrichment (rate-limits on cold start).
-  const [v, i, l] = await Promise.allSettled([fetchVelodromeData(), fetchInkySwapData(), fetchDefiLlama()])
-  const geckoVelo = v.status === 'fulfilled' ? v.value : []
-  const inky      = i.status === 'fulfilled' ? i.value : []
-  const llama     = l.status === 'fulfilled' ? l.value : []
-  if (v.status === 'rejected') console.error('[best-aprs] Velodrome/Gecko failed:', v.reason)
+  const [v, i, n, l] = await Promise.allSettled([fetchVelodromeData(), fetchInkySwapData(), fetchNadoVault(), fetchDefiLlama()])
+  const velo  = v.status === 'fulfilled' ? v.value : []
+  const inky  = i.status === 'fulfilled' ? i.value : []
+  const nado  = n.status === 'fulfilled' ? n.value : []
+  const llama = l.status === 'fulfilled' ? l.value : []
+  if (v.status === 'rejected') console.error('[best-aprs] Velodrome failed:', v.reason)
   if (i.status === 'rejected') console.error('[best-aprs] InkySwap failed:', i.reason)
+  if (n.status === 'rejected') console.error('[best-aprs] Nado failed:', n.reason)
   if (l.status === 'rejected') console.error('[best-aprs] DefiLlama failed:', l.reason)
-
-  // Split DefiLlama results: Velodrome entries vs others (Tydro, Curve)
-  const llamaVelo  = llama.filter(e => e.protocol.startsWith('Velodrome'))
-  const llamaOther = llama.filter(e => !e.protocol.startsWith('Velodrome'))
-
-  // Use GeckoTerminal Velodrome data if available (more granular per-pool),
-  // otherwise fall back to DefiLlama Velodrome data (always available)
-  const veloData = geckoVelo.length > 0 ? geckoVelo : llamaVelo
-  if (geckoVelo.length === 0 && llamaVelo.length > 0) {
-    console.warn(`[best-aprs] GeckoTerminal empty, using ${llamaVelo.length} DefiLlama Velodrome pools`)
-  }
-
-  const all = [...veloData, ...inky, ...llamaOther]
+  const all = [...velo, ...inky, ...nado, ...llama]
   all.sort((a, b) => b.apr - a.apr || b.tvl - a.tvl)
   return all
 }
