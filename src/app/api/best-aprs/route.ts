@@ -65,65 +65,74 @@ const VELO_DEX_IDS = ['velodrome-finance-v2-ink', 'velodrome-finance-slipstream-
 // Source: https://velodrome.finance bundle → VITE_LP_SUGAR_ADDRESS_57073
 // Function: all(uint256 limit, uint256 offset, uint256 filter) → DynArray[Lp, 500]
 // Selector: keccak256("all(uint256,uint256,uint256)")[:4] = 0x48523ff0
-const LP_SUGAR     = '0x46e07c9b4016f8E5c3cD0b2fd20147A4d0972120' as const
-const SUGAR_LIMIT  = 50  // safe batch size under RPC response limits
+const LP_SUGAR    = '0x46e07c9b4016f8E5c3cD0b2fd20147A4d0972120' as const
+const SUGAR_LIMIT = 50
 
 // ─── InkySwap on Ink ────────────────────────────────────────────────────────
-const INKY_URL       = 'https://inkyswap.com/liquidity'
-const INKY_API_BASE  = 'https://inkyswap.com/api'
+const INKY_URL      = 'https://inkyswap.com/liquidity'
+const INKY_API_BASE = 'https://inkyswap.com/api'
 
-// ─── LP Sugar ABI: struct Lp field order matches LpSugar.vy ─────────────────
-// Only the fields we actually use are listed; the rest are decoded but ignored.
+// ─── Nado NLP Vault ──────────────────────────────────────────────────────────
+// gateway.prod.nado.xyz blocks datacenter IPs unless Accept-Encoding is set.
+// Both endpoints require: Accept-Encoding: gzip, br, deflate
+const NADO_GATEWAY = 'https://gateway.prod.nado.xyz'
+const NADO_ARCHIVE = 'https://archive.prod.nado.xyz/v1'
+// Required headers — gateway returns {"reason":"ip_query_only","blocked":true} without them
+// and archive returns {"reason":"Invalid compression headers..."} without Accept-Encoding
+const NADO_HEADERS = {
+  'Content-Type':    'application/json',
+  'Accept':          'application/json',
+  'Accept-Encoding': 'gzip, br, deflate',
+}
+
+// ─── LP Sugar ABI ────────────────────────────────────────────────────────────
 const LP_COMPONENTS = [
-  { name: 'lp',             type: 'address'  },  // 0
-  { name: 'symbol',         type: 'string'   },  // 1  — empty for CL pools
-  { name: 'decimals',       type: 'uint8'    },  // 2
-  { name: 'liquidity',      type: 'uint256'  },  // 3
-  { name: 'type',           type: 'int24'    },  // 4  — >0 = CL tick spacing, <0 = V2 stable, 0 = V2 volatile
-  { name: 'tick',           type: 'int24'    },  // 5
-  { name: 'sqrt_ratio',     type: 'uint160'  },  // 6
-  { name: 'token0',         type: 'address'  },  // 7
-  { name: 'reserve0',       type: 'uint256'  },  // 8
-  { name: 'staked0',        type: 'uint256'  },  // 9
-  { name: 'token1',         type: 'address'  },  // 10
-  { name: 'reserve1',       type: 'uint256'  },  // 11
-  { name: 'staked1',        type: 'uint256'  },  // 12
-  { name: 'gauge',          type: 'address'  },  // 13
-  { name: 'gauge_liquidity', type: 'uint256' },  // 14
-  { name: 'gauge_alive',    type: 'bool'     },  // 15
-  { name: 'fee',            type: 'address'  },  // 16
-  { name: 'bribe',          type: 'address'  },  // 17
-  { name: 'factory',        type: 'address'  },  // 18
-  { name: 'emissions',      type: 'uint256'  },  // 19 — XVELO wei/sec (current epoch)
-  { name: 'emissions_token', type: 'address' },  // 20
-  { name: 'emissions_cap',  type: 'uint256'  },  // 21
-  { name: 'pool_fee',       type: 'uint256'  },  // 22 — bps for V2, tick-spacing for CL
-  { name: 'unstaked_fee',   type: 'uint256'  },  // 23
-  { name: 'token0_fees',    type: 'uint256'  },  // 24
-  { name: 'token1_fees',    type: 'uint256'  },  // 25
-  { name: 'locked',         type: 'uint256'  },  // 26
-  { name: 'emerging',       type: 'uint256'  },  // 27
-  { name: 'created_at',     type: 'uint32'   },  // 28
-  { name: 'nfpm',           type: 'address'  },  // 29
-  { name: 'alm',            type: 'address'  },  // 30
-  { name: 'root',           type: 'address'  },  // 31
+  { name: 'lp',              type: 'address'  },
+  { name: 'symbol',          type: 'string'   },
+  { name: 'decimals',        type: 'uint8'    },
+  { name: 'liquidity',       type: 'uint256'  },
+  { name: 'type',            type: 'int24'    },  // >0 = CL tickSpacing, <0 = V2 stable, 0 = V2 volatile
+  { name: 'tick',            type: 'int24'    },
+  { name: 'sqrt_ratio',      type: 'uint160'  },
+  { name: 'token0',          type: 'address'  },
+  { name: 'reserve0',        type: 'uint256'  },
+  { name: 'staked0',         type: 'uint256'  },
+  { name: 'token1',          type: 'address'  },
+  { name: 'reserve1',        type: 'uint256'  },
+  { name: 'staked1',         type: 'uint256'  },
+  { name: 'gauge',           type: 'address'  },
+  { name: 'gauge_liquidity', type: 'uint256'  },
+  { name: 'gauge_alive',     type: 'bool'     },
+  { name: 'fee',             type: 'address'  },
+  { name: 'bribe',           type: 'address'  },
+  { name: 'factory',         type: 'address'  },
+  { name: 'emissions',       type: 'uint256'  },  // XVELO wei/sec for current epoch
+  { name: 'emissions_token', type: 'address'  },
+  { name: 'emissions_cap',   type: 'uint256'  },
+  { name: 'pool_fee',        type: 'uint256'  },
+  { name: 'unstaked_fee',    type: 'uint256'  },
+  { name: 'token0_fees',     type: 'uint256'  },
+  { name: 'token1_fees',     type: 'uint256'  },
+  { name: 'locked',          type: 'uint256'  },
+  { name: 'emerging',        type: 'uint256'  },
+  { name: 'created_at',      type: 'uint32'   },
+  { name: 'nfpm',            type: 'address'  },
+  { name: 'alm',             type: 'address'  },
+  { name: 'root',            type: 'address'  },
 ] as const
 
-// ─── Sugar pool record ───────────────────────────────────────────────────────
 interface SugarPool {
-  lp:          string
-  symbol:      string  // "vAMMV2-WETH/USDC.e", "" for CL
-  token0:      string
-  token1:      string
-  emissions:   number  // XVELO/sec (already /1e18)
-  gaugeAlive:  boolean
-  isCL:        boolean
-  isStable:    boolean
+  lp:         string
+  symbol:     string
+  token0:     string
+  token1:     string
+  emissions:  number  // XVELO/sec already /1e18
+  gaugeAlive: boolean
+  isCL:       boolean
+  isStable:   boolean
 }
 
 // ─── Fetch all pools from LP Sugar (paginated) ───────────────────────────────
-// Replaces the old Voter.gauges() → Gauge.rewardRate() path.
-// Sugar returns `emissions` (XVELO wei/sec) directly per pool — no extra calls.
 async function fetchSugarPools(): Promise<SugarPool[]> {
   const all: SugarPool[] = []
   let offset = 0
@@ -133,7 +142,7 @@ async function fetchSugarPools(): Promise<SugarPool[]> {
       '0x48523ff0'
       + SUGAR_LIMIT.toString(16).padStart(64, '0')
       + offset.toString(16).padStart(64, '0')
-      + '0'.repeat(64)  // filter = 0 (all pools)
+      + '0'.repeat(64)
     ) as `0x${string}`
 
     let result = ''
@@ -207,7 +216,6 @@ async function fetchXveloPrice(): Promise<number> {
 }
 
 // ─── GeckoTerminal: TVL + vol24h for all Velodrome pools on Ink ──────────────
-// Paginates all available pages (both V2 and Slipstream DEX IDs).
 interface GeckoPool { address: string; base: string; quote: string; tvl: number; vol24h: number; isCL: boolean; isStable: boolean; feeApr: number }
 
 async function fetchGeckoPools(): Promise<GeckoPool[]> {
@@ -215,9 +223,7 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
   const FEE_STABLE = 0.0001, FEE_DEFAULT = 0.003
 
   const pageFetches: Promise<{ dexId: string; pools: any[]; included: any[] }>[] = []
-
   for (const dexId of VELO_DEX_IDS) {
-    // Fetch pages 1–3 in parallel per DEX (V2 has ~20 pools, Slipstream ~31)
     for (let page = 1; page <= 3; page++) {
       pageFetches.push(
         fetch(
@@ -233,7 +239,6 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
 
   const results = await Promise.all(pageFetches)
 
-  // Build token symbol lookup from all included objects
   const tokenSymbols = new Map<string, string>()
   for (const { included } of results)
     for (const inc of included)
@@ -252,7 +257,6 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
       let base  = tokenSymbols.get(pool.relationships?.base_token?.data?.id ?? '') ?? ''
       let quote = tokenSymbols.get(pool.relationships?.quote_token?.data?.id ?? '') ?? ''
 
-      // Fallback: parse from pool name like "USD₮0 / WETH 0.05%" or "WETH/USDC.e"
       if ((!base || !quote) && poolName.includes('/')) {
         const nameClean = poolName.replace(/\s*\d+\.?\d*%\s*$/, '').trim()
         const [p0, p1] = nameClean.split('/').map((s: string) => s.trim())
@@ -261,7 +265,6 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
       }
       if (!base || !quote) continue
 
-      // Normalize: USD₮0 → USDT0
       base  = base.replace('₮', 'T')
       quote = quote.replace('₮', 'T')
 
@@ -296,13 +299,9 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
   if (geckoResult.status === 'rejected')
     console.error('[best-aprs] GeckoTerminal fetch failed:', geckoResult.reason)
 
-  // Build emissions lookup from Sugar (address → XVELO/sec)
-  // Sugar is the authoritative source — no Voter/Gauge RPC calls needed
   const emissionsMap = new Map<string, number>()
   for (const p of sugarPools) {
-    if (p.gaugeAlive && p.emissions > 0) {
-      emissionsMap.set(p.lp, p.emissions)
-    }
+    if (p.gaugeAlive && p.emissions > 0) emissionsMap.set(p.lp, p.emissions)
   }
 
   if (geckoPools.length === 0) {
@@ -312,8 +311,8 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
 
   const out: AprEntry[] = []
   for (const g of geckoPools) {
-    const xveloPerSec  = emissionsMap.get(g.address) ?? 0
-    const emissionApr  = (xveloPerSec > 0 && xveloPrice > 0 && g.tvl > 0)
+    const xveloPerSec = emissionsMap.get(g.address) ?? 0
+    const emissionApr = (xveloPerSec > 0 && xveloPrice > 0 && g.tvl > 0)
       ? (xveloPerSec * xveloPrice * SECONDS_YEAR / g.tvl) * 100
       : 0
     const totalApr = emissionApr + g.feeApr
@@ -375,24 +374,41 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── Nado vault ──────────────────────────────────────────────────────────────
+// ─── Nado NLP Vault ──────────────────────────────────────────────────────────
+// IMPORTANT: Both endpoints require `Accept-Encoding: gzip, br, deflate`.
+// The gateway returns {"reason":"ip_query_only","blocked":true} without it,
+// and the archive returns a compression header error.
+// The fetch() API in Cloudflare Workers does NOT add Accept-Encoding automatically.
 async function fetchNadoVault(): Promise<AprEntry[]> {
   try {
     const now = Math.floor(Date.now() / 1000)
-    const days30 = 30 * 86400
+    const thirtyDaysAgo = now - 30 * 86400
 
     const [poolRes, snapNowRes, snapOldRes] = await Promise.all([
-      fetch('https://gateway.prod.nado.xyz/api/v1/pools', { signal: AbortSignal.timeout(10_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&offset=0`, { signal: AbortSignal.timeout(8_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&before=${now - days30}`, { signal: AbortSignal.timeout(8_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${NADO_GATEWAY}/v1/query?type=nlp_pool_info`, {
+        headers: NADO_HEADERS,
+        signal: AbortSignal.timeout(10_000),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+
+      fetch(NADO_ARCHIVE, {
+        method: 'POST',
+        headers: NADO_HEADERS,
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ nlp_snapshots: { limit: 1 } }),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
+
+      fetch(NADO_ARCHIVE, {
+        method: 'POST',
+        headers: NADO_HEADERS,
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ nlp_snapshots: { limit: 1, max_time: thirtyDaysAgo } }),
+      }).then(r => r.ok ? r.json() : null).catch(() => null),
     ])
 
     const pools = poolRes?.data?.nlp_pools ?? []
     if (pools.length === 0) return []
 
+    // Extract NLP supply + price from pool info
     let nlpSupply = 0, nlpPriceFromPool = 0
     for (const pool of pools) {
       for (const sp of (pool.subaccount_info?.spot_products ?? [])) {
@@ -405,12 +421,14 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
       if (nlpSupply > 0) break
     }
 
+    // TVL from latest snapshot (more accurate) or fallback to supply × price
     const latestSnap = (snapNowRes?.snapshots ?? [])[0]
     const totalTVL = latestSnap
       ? parseFloat(latestSnap.tvl ?? '0') / 1e18
       : nlpSupply * nlpPriceFromPool
     if (totalTVL < 100) return []
 
+    // 30-day rolling APR from NLP oracle price
     let apr = 0
     const currentPrice = latestSnap
       ? parseFloat(latestSnap.oracle_price_x18 ?? '0') / 1e18
@@ -419,14 +437,15 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
     if (oldSnap) {
       const oldPrice = parseFloat(oldSnap.oracle_price_x18 ?? '0') / 1e18
       if (oldPrice > 0 && currentPrice > oldPrice) {
-        const oldTs = parseInt(oldSnap.timestamp ?? '0')
-        const newTs = latestSnap ? parseInt(latestSnap.timestamp ?? '0') : now
+        const oldTs       = parseInt(oldSnap.timestamp ?? '0')
+        const newTs       = latestSnap ? parseInt(latestSnap.timestamp ?? '0') : now
         const daysBetween = Math.max(1, (newTs - oldTs) / 86400)
         apr = ((currentPrice - oldPrice) / oldPrice) * (365 / daysBetween) * 100
       }
     }
+    // Fallback: inception APR
     if (apr <= 0 && currentPrice > 1.0) {
-      const LAUNCH = new Date('2025-11-20').getTime()
+      const LAUNCH      = new Date('2025-11-20').getTime()
       const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
       apr = (currentPrice - 1.0) * (365 / daysSinceLaunch) * 100
     }
@@ -480,8 +499,8 @@ async function fetchDefiLlama(): Promise<AprEntry[]> {
 
 // ─── Cache + GET ──────────────────────────────────────────────────────────────
 
-const SOFT_TTL = 3 * 60 * 1000   // 3 minutes (ms) — consider stale after this
-const HARD_TTL = 10 * 60         // 10 minutes (seconds) — KV auto-deletes
+const SOFT_TTL = 3 * 60 * 1000
+const HARD_TTL = 10 * 60
 
 let inflight: Promise<AprEntry[]> | null = null
 
