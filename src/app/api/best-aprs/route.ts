@@ -174,38 +174,53 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
 }
 
 // ─── InkySwap: /api/pairs ─────────────────────────────────────────────────────
+// Confirmed via bundle analysis (chunk 2988-1fe4362d2f7e9b99.js):
+//   GET https://inkyswap.com/api/pairs
+//   Returns 400+ pools with pre-calculated `apr` field — the site uses it directly.
+//   Fields: pair_address, token0.symbol, token1.symbol, liquidity_usd,
+//           volume_24h, apr, fee_tier, version, daily_fees
+
 async function fetchInkySwapData(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
   try {
     const res = await fetch(`${INKY_API_BASE}/pairs`, {
-      signal: AbortSignal.timeout(12_000),
+      signal:  AbortSignal.timeout(12_000),
       headers: { Accept: 'application/json' },
     })
-    if (!res.ok) return out
-    const data = await res.json()
-    const pairs: any[] = Array.isArray(data) ? data : (data?.pairs ?? data?.data ?? [])
+    if (!res.ok) {
+      console.error(`[best-aprs] InkySwap HTTP ${res.status}`)
+      return out
+    }
+    const pairs: any[] = await res.json()
+    if (!Array.isArray(pairs)) return out
 
     for (const p of pairs) {
-      const base  = p.token0?.symbol ?? ''
-      const quote = p.token1?.symbol ?? ''
+      const base  = (p.token0?.symbol as string ?? '').replace('\u20ae', 'T')
+      const quote = (p.token1?.symbol as string ?? '').replace('\u20ae', 'T')
       if (!base || !quote) continue
 
-      const tvl    = parseFloat(p.liquidity_usd ?? p.tvl_usd ?? p.tvl ?? '0')
-      const aprRaw = parseFloat(p.apr ?? p.total_apr ?? '0')
-      if (tvl < 100 || aprRaw <= 0 || aprRaw > 50_000) continue
+      const tvl = (p.liquidity_usd as number) ?? 0
+      const apr = (p.apr           as number) ?? 0
+      if (tvl < 500 || apr <= 0 || apr > 50_000) continue
+
+      // Include version + fee_tier in label so v2/v3/v4 duplicates are distinguishable
+      const ver    = (p.version  as string) ?? 'v2'
+      const feeTier = (p.fee_tier as string) ?? ''
+      const suffix  = feeTier ? `${ver} ${feeTier}` : ver
 
       out.push({
         protocol: 'InkySwap',
         logo:     'https://icons.llamao.fi/icons/protocols/inkyswap?w=48&h=48',
         url:      INKY_URL,
         tokens:   [base, quote],
-        label:    `${base}-${quote}`,
-        apr:      Math.round(aprRaw * 100) / 100,
+        label:    `${base}-${quote} (${suffix})`,
+        apr:      Math.round(apr * 100) / 100,
         tvl,
         type:     'pool',
         isStable: allStable([base, quote]),
       })
     }
+    console.log(`[best-aprs] InkySwap: ${out.length} pools from /api/pairs`)
   } catch (e) { console.error('[best-aprs] InkySwap error:', e) }
   return out
 }
