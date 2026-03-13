@@ -1,25 +1,25 @@
 import { NextResponse } from 'next/server'
 import { decodeAbiParameters } from 'viem'
-import { INK_RPC } from '@/lib/ink'
+import { INK_RPC, INK_RPC_SECONDARY } from '@/lib/ink'
 import { kvGet, kvSet } from '@/lib/kvCache'
 import { getPrice } from '@/lib/priceService'
 
 export const revalidate = 0
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 export interface AprEntry {
-  protocol:  string
-  logo:      string
-  url:       string
-  tokens:    string[]
-  label:     string
-  apr:       number
-  tvl:       number
-  type:      'pool' | 'vault' | 'lend'
-  isStable:  boolean
+  protocol:   string
+  logo:       string
+  url:        string
+  tokens:     string[]
+  label:      string
+  apr:        number
+  tvl:        number
+  type:       'pool' | 'vault' | 'lend'
+  isStable:   boolean
 }
 
-// ─── Stablecoin classification ────────────────────────────────────────────────
+// ─── Stablecoin classification ──────────────────────────────────────────────
 const STABLECOINS = new Set([
   'USDC', 'USDC.E', 'USDT', 'USDT0', 'DAI', 'FRAX', 'FRXUSD', 'SFRXUSD',
   'CRVUSD', 'BUSD', 'TUSD', 'LUSD', 'MIM', 'USD1', 'LVUSD', 'USDE', 'SUSDE',
@@ -28,7 +28,7 @@ const STABLECOINS = new Set([
 ])
 
 function isStable(sym: string): boolean {
-  return STABLECOINS.has(sym.toUpperCase().replace('\u20ae', 'T'))
+  return STABLECOINS.has(sym.toUpperCase().replace('₮', 'T'))
 }
 function allStable(tokens: string[]): boolean {
   return tokens.length > 0 && tokens.every(isStable)
@@ -36,7 +36,7 @@ function allStable(tokens: string[]): boolean {
 
 const NADO_LOGO = '/nado-logo.jpg'
 
-// ─── Velodrome on Ink (chain 57073) ──────────────────────────────────────────
+// ─── Velodrome on Ink (chain 57073) ─────────────────────────────────────────
 const INK_RPC_ALT  = 'https://ink.drpc.org'
 const VELO_URL     = 'https://velodrome.finance/liquidity?chain=57073'
 const GECKO_BASE   = 'https://api.geckoterminal.com/api/v2'
@@ -44,22 +44,13 @@ const SECONDS_YEAR = 86400 * 365
 const XVELO_INK    = '0x7f9AdFbd38b669F03d1d11000Bc76b9AaEA28A81'
 const VELO_DEX_IDS = ['velodrome-finance-v2-ink', 'velodrome-finance-slipstream-ink']
 
-// LP Sugar — all(uint256 limit, uint256 offset, uint256 filter) = 0x48523ff0
+// LP Sugar — all(uint256 limit, uint256 offset, uint256 filter) selector 0x48523ff0
 const LP_SUGAR    = '0x46e07c9b4016f8E5c3cD0b2fd20147A4d0972120' as const
 const SUGAR_LIMIT = 50
 
 // ─── InkySwap ────────────────────────────────────────────────────────────────
 const INKY_URL      = 'https://inkyswap.com/liquidity'
 const INKY_API_BASE = 'https://inkyswap.com/api'
-
-// ─── Nado NLP Vault ───────────────────────────────────────────────────────────
-const NADO_GATEWAY = 'https://gateway.prod.nado.xyz'
-const NADO_ARCHIVE = 'https://archive.prod.nado.xyz/v1'
-const NADO_HEADERS = {
-  'Content-Type':    'application/json',
-  'Accept':          'application/json',
-  'Accept-Encoding': 'gzip, br, deflate',
-}
 
 // ─── Tydro (Aave V3 fork on Ink) ─────────────────────────────────────────────
 const TYDRO_DATA_PROVIDER = '0x96086C25d13943C80Ff9a19791a40Df6aFC08328' as const
@@ -84,49 +75,49 @@ const TYDRO_RESERVES: { address: string; symbol: string }[] = [
 
 // ─── LP Sugar ABI ─────────────────────────────────────────────────────────────
 const LP_COMPONENTS = [
-  { name: 'lp',              type: 'address'  },
-  { name: 'symbol',          type: 'string'   },
-  { name: 'decimals',        type: 'uint8'    },
-  { name: 'liquidity',       type: 'uint256'  },
-  { name: 'type',            type: 'int24'    },
-  { name: 'tick',            type: 'int24'    },
-  { name: 'sqrt_ratio',      type: 'uint160'  },
-  { name: 'token0',          type: 'address'  },
-  { name: 'reserve0',        type: 'uint256'  },
-  { name: 'staked0',         type: 'uint256'  },
-  { name: 'token1',          type: 'address'  },
-  { name: 'reserve1',        type: 'uint256'  },
-  { name: 'staked1',         type: 'uint256'  },
-  { name: 'gauge',           type: 'address'  },
-  { name: 'gauge_liquidity', type: 'uint256'  },
-  { name: 'gauge_alive',     type: 'bool'     },
-  { name: 'fee',             type: 'address'  },
-  { name: 'bribe',           type: 'address'  },
-  { name: 'factory',         type: 'address'  },
-  { name: 'emissions',       type: 'uint256'  },
-  { name: 'emissions_token', type: 'address'  },
-  { name: 'emissions_cap',   type: 'uint256'  },
-  { name: 'pool_fee',        type: 'uint256'  },
-  { name: 'unstaked_fee',    type: 'uint256'  },
-  { name: 'token0_fees',     type: 'uint256'  },
-  { name: 'token1_fees',     type: 'uint256'  },
-  { name: 'locked',          type: 'uint256'  },
-  { name: 'emerging',        type: 'uint256'  },
-  { name: 'created_at',      type: 'uint32'   },
-  { name: 'nfpm',            type: 'address'  },
-  { name: 'alm',             type: 'address'  },
-  { name: 'root',            type: 'address'  },
+  { name: 'lp',             type: 'address'  },  // 0
+  { name: 'symbol',         type: 'string'   },  // 1  — empty for CL pools
+  { name: 'decimals',       type: 'uint8'    },  // 2
+  { name: 'liquidity',      type: 'uint256'  },  // 3
+  { name: 'type',           type: 'int24'    },  // 4  — >0 CL, <0 V2 stable, 0 V2 volatile
+  { name: 'tick',           type: 'int24'    },  // 5
+  { name: 'sqrt_ratio',     type: 'uint160'  },  // 6
+  { name: 'token0',         type: 'address'  },  // 7
+  { name: 'reserve0',       type: 'uint256'  },  // 8
+  { name: 'staked0',        type: 'uint256'  },  // 9
+  { name: 'token1',         type: 'address'  },  // 10
+  { name: 'reserve1',       type: 'uint256'  },  // 11
+  { name: 'staked1',        type: 'uint256'  },  // 12
+  { name: 'gauge',          type: 'address'  },  // 13
+  { name: 'gauge_liquidity', type: 'uint256' },  // 14
+  { name: 'gauge_alive',    type: 'bool'     },  // 15
+  { name: 'fee',            type: 'address'  },  // 16
+  { name: 'bribe',          type: 'address'  },  // 17
+  { name: 'factory',        type: 'address'  },  // 18
+  { name: 'emissions',      type: 'uint256'  },  // 19 — XVELO wei/sec
+  { name: 'emissions_token', type: 'address' },  // 20
+  { name: 'emissions_cap',  type: 'uint256'  },  // 21
+  { name: 'pool_fee',       type: 'uint256'  },  // 22 — bps (V2) or tick-spacing (CL)
+  { name: 'unstaked_fee',   type: 'uint256'  },  // 23
+  { name: 'token0_fees',    type: 'uint256'  },  // 24
+  { name: 'token1_fees',    type: 'uint256'  },  // 25
+  { name: 'locked',         type: 'uint256'  },  // 26
+  { name: 'emerging',       type: 'uint256'  },  // 27
+  { name: 'created_at',     type: 'uint32'   },  // 28
+  { name: 'nfpm',           type: 'address'  },  // 29
+  { name: 'alm',            type: 'address'  },  // 30
+  { name: 'root',           type: 'address'  },  // 31
 ] as const
 
 interface SugarPool {
-  lp:         string
-  symbol:     string
-  token0:     string
-  token1:     string
-  emissions:  number
-  gaugeAlive: boolean
-  isCL:       boolean
-  isStable:   boolean
+  lp:          string
+  symbol:      string
+  token0:      string
+  token1:      string
+  emissions:   number  // XVELO/sec (÷1e18)
+  gaugeAlive:  boolean
+  isCL:        boolean
+  isStable:    boolean
 }
 
 // ─── Sugar: all pools paginated ───────────────────────────────────────────────
@@ -190,16 +181,14 @@ async function fetchSugarPools(): Promise<SugarPool[]> {
   return all
 }
 
-// ─── XVELO price ──────────────────────────────────────────────────────────────
-// Priority: GeckoTerminal (free, no API key needed)
-// Fallback:  priceService KV cache — velodrome-finance already in ALL_PRICE_IDS,
-//            so this hits KV and never makes an extra CoinGecko call.
+// ─── XVELO price ─────────────────────────────────────────────────────────────
+// GeckoTerminal first (XVELO not on CoinGecko), fallback to priceService KV
 async function fetchXveloPrice(): Promise<number> {
   try {
-    const res = await fetch(`${GECKO_BASE}/simple/networks/ink/token_price/${XVELO_INK}`, {
-      signal: AbortSignal.timeout(8_000),
-      headers: { Accept: 'application/json' },
-    })
+    const res = await fetch(
+      `${GECKO_BASE}/simple/networks/ink/token_price/${XVELO_INK}`,
+      { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json' } }
+    )
     if (res.ok) {
       const price = parseFloat(
         (await res.json())?.data?.attributes?.token_prices?.[XVELO_INK.toLowerCase()] ?? '0'
@@ -207,13 +196,10 @@ async function fetchXveloPrice(): Promise<number> {
       if (price > 0) return price
     }
   } catch { /* fall through */ }
-
   return getPrice('velodrome-finance')
 }
 
-// ─── GeckoTerminal: TVL + vol24h for Velodrome pools ─────────────────────────
-// Only page 1 per dex (2 requests total) to stay well within GeckoTerminal's
-// rate limit. Adding more pages would risk 429s that empty geckoPools entirely.
+// ─── GeckoTerminal: TVL + vol24h (1 page/dex = 2 requests — avoids rate limit) ─
 interface GeckoPool {
   address: string; base: string; quote: string
   tvl: number; vol24h: number
@@ -224,7 +210,6 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
   const out: GeckoPool[] = [], seen = new Set<string>()
   const FEE_STABLE = 0.0001, FEE_DEFAULT = 0.003
 
-  // One request per DEX — 2 total, safe within rate limits
   const results = await Promise.all(
     VELO_DEX_IDS.map(dexId =>
       fetch(
@@ -263,15 +248,23 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
       }
       if (!base || !quote) continue
 
-      base  = base.replace('\u20ae', 'T')
-      quote = quote.replace('\u20ae', 'T')
+      base  = base.replace('₮', 'T')
+      quote = quote.replace('₮', 'T')
 
       const tvl    = parseFloat(attrs.reserve_in_usd ?? '0')
       const vol24h = parseFloat(attrs.volume_usd?.h24 ?? '0')
       if (tvl < 50) continue
 
       const pairIsStable = poolName.toLowerCase().includes('stable') || allStable([base, quote])
-      const feeApr = tvl > 0 ? (vol24h * (pairIsStable ? FEE_STABLE : FEE_DEFAULT) * 365 / tvl) * 100 : 0
+
+      // CL pools embed the real fee in the pool name (e.g. "WETH / USDT0 0.05%")
+      // V2 pools: stable = 0.01%, volatile = 0.3%
+      let poolFeeRate = pairIsStable ? FEE_STABLE : FEE_DEFAULT
+      if (isCL) {
+        const feeMatch = poolName.match(/(\d+\.?\d*)%/)
+        if (feeMatch) poolFeeRate = parseFloat(feeMatch[1]) / 100
+      }
+      const feeApr = tvl > 0 ? (vol24h * poolFeeRate * 365 / tvl) * 100 : 0
 
       out.push({ address: addr, base, quote, tvl, vol24h, isCL, isStable: pairIsStable, feeApr })
     }
@@ -280,7 +273,7 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
   return out
 }
 
-// ─── Velodrome: Sugar emissions + GeckoTerminal TVL/fees ─────────────────────
+// ─── Combined Velodrome: Sugar on-chain + GeckoTerminal TVL/fees ─────────────
 async function fetchVelodromeData(): Promise<AprEntry[]> {
   const [xveloPriceResult, geckoResult, sugarResult] = await Promise.allSettled([
     fetchXveloPrice(),
@@ -297,12 +290,13 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
   if (geckoResult.status === 'rejected')
     console.error('[best-aprs] GeckoTerminal fetch failed:', geckoResult.reason)
 
+  // Sugar is the authoritative source for emissions — no Voter/Gauge RPC calls needed
   const emissionsMap = new Map<string, number>()
   for (const p of sugarPools)
     if (p.gaugeAlive && p.emissions > 0) emissionsMap.set(p.lp, p.emissions)
 
   if (geckoPools.length === 0) {
-    console.error('[best-aprs] GeckoTerminal returned 0 pools — Velodrome data unavailable')
+    console.warn('[best-aprs] No GeckoTerminal pools — Velodrome skipped')
     return []
   }
 
@@ -313,6 +307,7 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
       ? (xveloPerSec * xveloPrice * SECONDS_YEAR / g.tvl) * 100
       : 0
     const totalApr = emissionApr + g.feeApr
+
     if (totalApr <= 0 && g.tvl < 500) continue
     if (totalApr > 50_000) continue
 
@@ -333,7 +328,7 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── InkySwap ─────────────────────────────────────────────────────────────────
+// ─── InkySwap: /api/pairs ─────────────────────────────────────────────────────
 async function fetchInkySwapData(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
   try {
@@ -349,9 +344,11 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
       const base  = p.token0?.symbol ?? ''
       const quote = p.token1?.symbol ?? ''
       if (!base || !quote) continue
+
       const tvl    = parseFloat(p.liquidity_usd ?? p.tvl_usd ?? p.tvl ?? '0')
       const aprRaw = parseFloat(p.apr ?? p.total_apr ?? '0')
       if (tvl < 100 || aprRaw <= 0 || aprRaw > 50_000) continue
+
       out.push({
         protocol: 'InkySwap',
         logo:     'https://icons.llamao.fi/icons/protocols/inkyswap?w=48&h=48',
@@ -371,28 +368,16 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
 // ─── Nado NLP Vault ───────────────────────────────────────────────────────────
 async function fetchNadoVault(): Promise<AprEntry[]> {
   try {
-    const now = Math.floor(Date.now() / 1000)
-    const thirtyDaysAgo = now - 30 * 86400
+    const now    = Math.floor(Date.now() / 1000)
+    const days30 = 30 * 86400
 
     const [poolRes, snapNowRes, snapOldRes] = await Promise.all([
-      fetch(`${NADO_GATEWAY}/v1/query?type=nlp_pool_info`, {
-        headers: NADO_HEADERS,
-        signal: AbortSignal.timeout(10_000),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      fetch(NADO_ARCHIVE, {
-        method: 'POST',
-        headers: NADO_HEADERS,
-        signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ nlp_snapshots: { limit: 1 } }),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      fetch(NADO_ARCHIVE, {
-        method: 'POST',
-        headers: NADO_HEADERS,
-        signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ nlp_snapshots: { limit: 1, max_time: thirtyDaysAgo } }),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('https://gateway.prod.nado.xyz/api/v1/pools', { signal: AbortSignal.timeout(10_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&offset=0', { signal: AbortSignal.timeout(8_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&before=${now - days30}`, { signal: AbortSignal.timeout(8_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
     ])
 
     const pools = poolRes?.data?.nlp_pools ?? []
@@ -451,6 +436,27 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
 }
 
 // ─── Tydro: on-chain supply APR + Merkl incentives ───────────────────────────
+// getReserveData(address) slot [5] = liquidityRate in RAY (÷1e27 = APR%)
+// Confirmed on-chain: WETH ~1.7%, USDT0 ~1.5%, USDG ~2.2%, GHO ~3.2%, USDC ~1.4%, USDe ~9.1%
+
+async function tydroRpcBatch(rpcUrl: string, batch: object[]): Promise<any[] | null> {
+  try {
+    const res = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(batch),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return Array.isArray(data) ? data : null
+  } catch (e) {
+    console.error(`[best-aprs] Tydro RPC ${rpcUrl} failed:`, e)
+    return null
+  }
+}
+
 async function fetchTydroData(): Promise<AprEntry[]> {
   const batch = TYDRO_RESERVES.map((r, i) => ({
     jsonrpc: '2.0' as const,
@@ -458,46 +464,49 @@ async function fetchTydroData(): Promise<AprEntry[]> {
     method: 'eth_call' as const,
     params: [
       {
-        to: TYDRO_DATA_PROVIDER,
+        to:   TYDRO_DATA_PROVIDER,
         data: ('0x35ea6a75' + '000000000000000000000000' + r.address.slice(2)) as `0x${string}`,
       },
       'latest',
     ],
   }))
 
-  const [onChainRes, merklRes] = await Promise.allSettled([
-    fetch(INK_RPC, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch),
-      signal: AbortSignal.timeout(15_000),
-    }).then(r => r.ok ? r.json() : null),
-
+  const [rpcResults, merklRes] = await Promise.allSettled([
+    (async () => {
+      const primary = await tydroRpcBatch(INK_RPC, batch)
+      if (primary) return primary
+      console.warn('[best-aprs] Tydro: primary RPC failed, trying secondary')
+      return tydroRpcBatch(INK_RPC_SECONDARY, batch)
+    })(),
     fetch(MERKL_URL, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
     }).then(r => r.ok ? r.json() : null).catch(() => null),
   ])
 
-  // getReserveData tuple slots: [5] = liquidityRate in RAY (1e27)
+  // Slot [5] of getReserveData tuple = liquidityRate in RAY (1e27)
   const supplyAprs = new Map<string, number>()
-  if (onChainRes.status === 'fulfilled' && Array.isArray(onChainRes.value)) {
-    for (const item of onChainRes.value) {
+  if (rpcResults.status === 'fulfilled' && Array.isArray(rpcResults.value)) {
+    for (const item of rpcResults.value) {
       const reserve = TYDRO_RESERVES[item.id]
-      if (!reserve || !item.result || item.result === '0x') continue
+      if (!reserve || !item.result || item.result === '0x' || item.result.length < 130) continue
       try {
-        const hex = item.result.slice(2)
+        const hex           = item.result.slice(2)
         const liquidityRate = BigInt('0x' + hex.slice(5 * 64, 6 * 64))
-        supplyAprs.set(reserve.address.toLowerCase(), Number(liquidityRate) / 1e27 * 100)
-      } catch { /* skip */ }
+        const apr           = Number(liquidityRate) / 1e27 * 100
+        if (apr > 0) supplyAprs.set(reserve.address.toLowerCase(), apr)
+      } catch { /* skip malformed */ }
     }
   } else {
-    console.error('[best-aprs] Tydro on-chain failed:', onChainRes.status === 'rejected' ? onChainRes.reason : 'null')
+    console.error('[best-aprs] Tydro on-chain failed (both RPCs):',
+      rpcResults.status === 'rejected' ? rpcResults.reason : 'null from both RPCs')
   }
+  console.log(`[best-aprs] Tydro: ${supplyAprs.size}/${TYDRO_RESERVES.length} reserves with supply APR`)
 
+  // Merkl: additional incentive APR per reserve token address
   const merklAprs = new Map<string, number>()
   if (merklRes.status === 'fulfilled' && Array.isArray(merklRes.value)) {
-    for (const opp of merklRes.value) {
+    for (const opp of (merklRes.value as any[])) {
       const merklApr = opp.apr ?? 0
       if (merklApr <= 0) continue
       for (const t of (opp.tokens ?? [])) {
@@ -531,7 +540,7 @@ async function fetchTydroData(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── Curve on Ink: DefiLlama ──────────────────────────────────────────────────
+// ─── Curve on Ink: DefiLlama ─────────────────────────────────────────────────
 async function fetchCurveData(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
   try {
@@ -563,8 +572,8 @@ async function fetchCurveData(): Promise<AprEntry[]> {
 }
 
 // ─── Cache + GET ──────────────────────────────────────────────────────────────
-const SOFT_TTL = 3 * 60 * 1000
-const HARD_TTL = 10 * 60
+const SOFT_TTL = 3 * 60 * 1000  // 3 min (ms) — stale threshold
+const HARD_TTL = 10 * 60        // 10 min (s)  — KV expiry
 
 let inflight: Promise<AprEntry[]> | null = null
 
