@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { encodeFunctionData, decodeFunctionResult, type Abi } from 'viem'
+import { decodeAbiParameters, type Abi } from 'viem'
 import { INK_RPC } from '@/lib/ink'
 import { kvGet, kvSet } from '@/lib/kvCache'
 
@@ -23,10 +23,11 @@ const STABLECOINS = new Set([
   'USDC', 'USDC.E', 'USDT', 'USDT0', 'DAI', 'FRAX', 'FRXUSD', 'SFRXUSD',
   'CRVUSD', 'BUSD', 'TUSD', 'LUSD', 'MIM', 'USD1', 'LVUSD', 'USDE', 'SUSDE',
   'DOLA', 'GUSD', 'SUSD', 'USDP', 'PYUSD', 'FDUSD', 'USDG', 'OUSDT',
+  'OUSD', 'OUSDM',
 ])
 
 function isStable(sym: string): boolean {
-  return STABLECOINS.has(sym.toUpperCase())
+  return STABLECOINS.has(sym.toUpperCase().replace('₮', 'T'))
 }
 function allStable(tokens: string[]): boolean {
   return tokens.length > 0 && tokens.every(isStable)
@@ -53,7 +54,6 @@ function inferType(project: string, poolMeta: string | null): 'pool' | 'vault' |
 }
 
 // ─── Velodrome on Ink (chain 57073) ─────────────────────────────────────────
-const VOTER_INK    = '0x97cDBCe21B6fd0585d29E539B1B99dAd328a1123' as const
 const INK_RPC_ALT  = 'https://ink.drpc.org'
 const VELO_URL     = 'https://velodrome.finance/liquidity?chain=57073'
 const GECKO_BASE   = 'https://api.geckoterminal.com/api/v2'
@@ -61,106 +61,136 @@ const SECONDS_YEAR = 86400 * 365
 const XVELO_INK    = '0x7f9AdFbd38b669F03d1d11000Bc76b9AaEA28A81'
 const VELO_DEX_IDS = ['velodrome-finance-v2-ink', 'velodrome-finance-slipstream-ink']
 
+// LP Sugar contract — deployed on Ink at chain 57073
+// Source: https://velodrome.finance bundle → VITE_LP_SUGAR_ADDRESS_57073
+// Function: all(uint256 limit, uint256 offset, uint256 filter) → DynArray[Lp, 500]
+// Selector: keccak256("all(uint256,uint256,uint256)")[:4] = 0x48523ff0
+const LP_SUGAR     = '0x46e07c9b4016f8E5c3cD0b2fd20147A4d0972120' as const
+const SUGAR_LIMIT  = 50  // safe batch size under RPC response limits
+
 // ─── InkySwap on Ink ────────────────────────────────────────────────────────
 const INKY_URL       = 'https://inkyswap.com/liquidity'
 const INKY_API_BASE  = 'https://inkyswap.com/api'
 
-const VOTER_ABI: Abi = [{ name: 'gauges', type: 'function', stateMutability: 'view', inputs: [{ name: '_pool', type: 'address' }], outputs: [{ name: '', type: 'address' }] }]
-const GAUGE_ABI: Abi = [{ name: 'rewardRate', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] }]
+// ─── LP Sugar ABI: struct Lp field order matches LpSugar.vy ─────────────────
+// Only the fields we actually use are listed; the rest are decoded but ignored.
+const LP_COMPONENTS = [
+  { name: 'lp',             type: 'address'  },  // 0
+  { name: 'symbol',         type: 'string'   },  // 1  — empty for CL pools
+  { name: 'decimals',       type: 'uint8'    },  // 2
+  { name: 'liquidity',      type: 'uint256'  },  // 3
+  { name: 'type',           type: 'int24'    },  // 4  — >0 = CL tick spacing, <0 = V2 stable, 0 = V2 volatile
+  { name: 'tick',           type: 'int24'    },  // 5
+  { name: 'sqrt_ratio',     type: 'uint160'  },  // 6
+  { name: 'token0',         type: 'address'  },  // 7
+  { name: 'reserve0',       type: 'uint256'  },  // 8
+  { name: 'staked0',        type: 'uint256'  },  // 9
+  { name: 'token1',         type: 'address'  },  // 10
+  { name: 'reserve1',       type: 'uint256'  },  // 11
+  { name: 'staked1',        type: 'uint256'  },  // 12
+  { name: 'gauge',          type: 'address'  },  // 13
+  { name: 'gauge_liquidity', type: 'uint256' },  // 14
+  { name: 'gauge_alive',    type: 'bool'     },  // 15
+  { name: 'fee',            type: 'address'  },  // 16
+  { name: 'bribe',          type: 'address'  },  // 17
+  { name: 'factory',        type: 'address'  },  // 18
+  { name: 'emissions',      type: 'uint256'  },  // 19 — XVELO wei/sec (current epoch)
+  { name: 'emissions_token', type: 'address' },  // 20
+  { name: 'emissions_cap',  type: 'uint256'  },  // 21
+  { name: 'pool_fee',       type: 'uint256'  },  // 22 — bps for V2, tick-spacing for CL
+  { name: 'unstaked_fee',   type: 'uint256'  },  // 23
+  { name: 'token0_fees',    type: 'uint256'  },  // 24
+  { name: 'token1_fees',    type: 'uint256'  },  // 25
+  { name: 'locked',         type: 'uint256'  },  // 26
+  { name: 'emerging',       type: 'uint256'  },  // 27
+  { name: 'created_at',     type: 'uint32'   },  // 28
+  { name: 'nfpm',           type: 'address'  },  // 29
+  { name: 'alm',            type: 'address'  },  // 30
+  { name: 'root',           type: 'address'  },  // 31
+] as const
 
-// ─── JSON-RPC batch with sequential fallback ────────────────────────────────
-interface BatchCall   { to: string; data: `0x${string}` }
-interface BatchResult { success: boolean; data: `0x${string}` }
+// ─── Sugar pool record ───────────────────────────────────────────────────────
+interface SugarPool {
+  lp:          string
+  symbol:      string  // "vAMMV2-WETH/USDC.e", "" for CL
+  token0:      string
+  token1:      string
+  emissions:   number  // XVELO/sec (already /1e18)
+  gaugeAlive:  boolean
+  isCL:        boolean
+  isStable:    boolean
+}
 
-async function rpcBatch(calls: BatchCall[], gas?: string): Promise<BatchResult[]> {
-  if (calls.length === 0) return []
-  const mkParams = (c: BatchCall) => gas ? { to: c.to, data: c.data, gas } : { to: c.to, data: c.data }
-  const batch = calls.map((c, i) => ({ jsonrpc: '2.0' as const, id: i + 1, method: 'eth_call' as const, params: [mkParams(c), 'latest'] }))
+// ─── Fetch all pools from LP Sugar (paginated) ───────────────────────────────
+// Replaces the old Voter.gauges() → Gauge.rewardRate() path.
+// Sugar returns `emissions` (XVELO wei/sec) directly per pool — no extra calls.
+async function fetchSugarPools(): Promise<SugarPool[]> {
+  const all: SugarPool[] = []
+  let offset = 0
 
-  for (const rpc of [INK_RPC, INK_RPC_ALT]) {
+  while (true) {
+    const data = (
+      '0x48523ff0'
+      + SUGAR_LIMIT.toString(16).padStart(64, '0')
+      + offset.toString(16).padStart(64, '0')
+      + '0'.repeat(64)  // filter = 0 (all pools)
+    ) as `0x${string}`
+
+    let result = ''
+    for (const rpc of [INK_RPC, INK_RPC_ALT]) {
+      try {
+        const res = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: LP_SUGAR, data }, 'latest'] }),
+          signal: AbortSignal.timeout(20_000),
+        })
+        const json = await res.json()
+        if (json.result && json.result.length > 10) { result = json.result; break }
+      } catch { continue }
+    }
+    if (!result) break
+
+    let batch: readonly { lp: string; symbol: string; type: number; token0: string; token1: string; gauge_alive: boolean; emissions: bigint; [k: string]: unknown }[]
     try {
-      const res = await fetch(rpc, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch), signal: AbortSignal.timeout(15_000),
+      const decoded = decodeAbiParameters(
+        [{ type: 'tuple[]', components: LP_COMPONENTS }],
+        result as `0x${string}`
+      )
+      batch = decoded[0] as typeof batch
+    } catch (e) {
+      console.error('[best-aprs] Sugar decode error at offset', offset, e)
+      break
+    }
+
+    for (const p of batch) {
+      const lpType = Number(p.type)
+      all.push({
+        lp:         (p.lp as string).toLowerCase(),
+        symbol:     p.symbol as string,
+        token0:     (p.token0 as string).toLowerCase(),
+        token1:     (p.token1 as string).toLowerCase(),
+        emissions:  Number(p.emissions as bigint) / 1e18,
+        gaugeAlive: p.gauge_alive as boolean,
+        isCL:       lpType > 0,
+        isStable:   lpType < 0,
       })
-      const json = await res.json()
-      if (!Array.isArray(json)) return sequentialFallback(calls, gas)
+    }
 
-      const results: BatchResult[] = calls.map(() => ({ success: false, data: '0x' as `0x${string}` }))
-      let ok = 0
-      for (const r of json) {
-        const idx = (r.id ?? 0) - 1
-        if (idx >= 0 && idx < calls.length && r.result && r.result !== '0x') {
-          results[idx] = { success: true, data: r.result as `0x${string}` }
-          ok++
-        }
-      }
-      return results
-    } catch { continue }
+    if (batch.length < SUGAR_LIMIT) break
+    offset += SUGAR_LIMIT
   }
-  return calls.map(() => ({ success: false, data: '0x' as `0x${string}` }))
+
+  return all
 }
 
-async function sequentialFallback(calls: BatchCall[], gas?: string): Promise<BatchResult[]> {
-  return Promise.all(calls.map(async (call) => {
-    try {
-      const params = gas ? { to: call.to, data: call.data, gas } : { to: call.to, data: call.data }
-      const res = await fetch(INK_RPC, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [params, 'latest'] }),
-        signal: AbortSignal.timeout(10_000),
-      })
-      const json = await res.json()
-      return json.result && json.result !== '0x'
-        ? { success: true, data: json.result as `0x${string}` }
-        : { success: false, data: '0x' as `0x${string}` }
-    } catch { return { success: false, data: '0x' as `0x${string}` } }
-  }))
-}
-
-// ─── Gauge emissions: Voter.gauges(pool) → Gauge.rewardRate() ───────────────
-async function fetchGaugeEmissions(poolAddresses: string[]): Promise<Map<string, number>> {
-  const emissions = new Map<string, number>()
-
-  const gaugeResults = await rpcBatch(poolAddresses.map(pool => ({
-    to: VOTER_INK,
-    data: encodeFunctionData({ abi: VOTER_ABI, functionName: 'gauges', args: [pool as `0x${string}`] }),
-  })))
-
-  const ZERO = '0x0000000000000000000000000000000000000000'
-  const poolGauges: { pool: string; gauge: string }[] = []
-  for (let i = 0; i < poolAddresses.length; i++) {
-    if (!gaugeResults[i].success) continue
-    try {
-      const gauge = decodeFunctionResult({ abi: VOTER_ABI, functionName: 'gauges', data: gaugeResults[i].data }) as string
-      if (gauge && gauge !== ZERO) poolGauges.push({ pool: poolAddresses[i], gauge })
-    } catch { /* skip */ }
-  }
-  if (poolGauges.length === 0) return emissions
-
-  const rateResults = await rpcBatch(poolGauges.map(pg => ({
-    to: pg.gauge,
-    data: encodeFunctionData({ abi: GAUGE_ABI, functionName: 'rewardRate', args: [] }),
-  })))
-
-  let withRewards = 0
-  for (let i = 0; i < poolGauges.length; i++) {
-    if (!rateResults[i].success) continue
-    try {
-      const rate = decodeFunctionResult({ abi: GAUGE_ABI, functionName: 'rewardRate', data: rateResults[i].data }) as bigint
-      if (rate > 0n) { emissions.set(poolGauges[i].pool.toLowerCase(), Number(rate) / 1e18); withRewards++ }
-    } catch { /* skip */ }
-  }
-  return emissions
-}
-
-// ─── VELO price (GeckoTerminal → CoinGecko fallback) ────────────────────────
-async function fetchVeloPrice(): Promise<number> {
+// ─── XVELO price (GeckoTerminal → CoinGecko fallback) ────────────────────────
+async function fetchXveloPrice(): Promise<number> {
   try {
     const res = await fetch(`${GECKO_BASE}/simple/networks/ink/token_price/${XVELO_INK}`, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json' } })
     if (res.ok) {
       const price = parseFloat((await res.json())?.data?.attributes?.token_prices?.[XVELO_INK.toLowerCase()] ?? '0')
-      if (price > 0) { return price }
+      if (price > 0) return price
     }
   } catch { /* fall through */ }
   try {
@@ -170,33 +200,45 @@ async function fetchVeloPrice(): Promise<number> {
     const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=velodrome-finance&vs_currencies=usd', { headers: cgHeaders, signal: AbortSignal.timeout(8_000) })
     if (res.ok) {
       const price = (await res.json())?.['velodrome-finance']?.usd ?? 0
-      if (price > 0) { return price }
+      if (price > 0) return price
     }
   } catch { /* skip */ }
   return 0
 }
 
-// ─── GeckoTerminal pool list for Velodrome on Ink ───────────────────────────
+// ─── GeckoTerminal: TVL + vol24h for all Velodrome pools on Ink ──────────────
+// Paginates all available pages (both V2 and Slipstream DEX IDs).
 interface GeckoPool { address: string; base: string; quote: string; tvl: number; vol24h: number; isCL: boolean; isStable: boolean; feeApr: number }
 
 async function fetchGeckoPools(): Promise<GeckoPool[]> {
   const out: GeckoPool[] = [], seen = new Set<string>()
   const FEE_STABLE = 0.0001, FEE_DEFAULT = 0.003
 
-  const results = await Promise.all(VELO_DEX_IDS.map(async (dexId) => {
-    try {
-      const url = `${GECKO_BASE}/networks/ink/dexes/${dexId}/pools?page=1&sort=h24_volume_usd_desc&include=base_token,quote_token`
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { Accept: 'application/json' } })
-      if (!res.ok) return { dexId, pools: [], included: [] }
-      const json = await res.json()
-      return { dexId, pools: json.data ?? [], included: json.included ?? [] }
-    } catch { return { dexId, pools: [], included: [] } }
-  }))
+  const pageFetches: Promise<{ dexId: string; pools: any[]; included: any[] }>[] = []
 
+  for (const dexId of VELO_DEX_IDS) {
+    // Fetch pages 1–3 in parallel per DEX (V2 has ~20 pools, Slipstream ~31)
+    for (let page = 1; page <= 3; page++) {
+      pageFetches.push(
+        fetch(
+          `${GECKO_BASE}/networks/ink/dexes/${dexId}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
+          { signal: AbortSignal.timeout(10_000), headers: { Accept: 'application/json' } }
+        )
+          .then(r => r.ok ? r.json() : null)
+          .then(json => ({ dexId, pools: json?.data ?? [], included: json?.included ?? [] }))
+          .catch(() => ({ dexId, pools: [], included: [] }))
+      )
+    }
+  }
+
+  const results = await Promise.all(pageFetches)
+
+  // Build token symbol lookup from all included objects
   const tokenSymbols = new Map<string, string>()
   for (const { included } of results)
     for (const inc of included)
-      if (inc.type === 'token' && inc.attributes?.symbol) tokenSymbols.set(inc.id, inc.attributes.symbol)
+      if (inc.type === 'token' && inc.attributes?.symbol)
+        tokenSymbols.set(inc.id, inc.attributes.symbol)
 
   for (const { dexId, pools } of results) {
     const isCL = dexId.includes('slipstream')
@@ -209,59 +251,94 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
       const poolName = attrs.name ?? ''
       let base  = tokenSymbols.get(pool.relationships?.base_token?.data?.id ?? '') ?? ''
       let quote = tokenSymbols.get(pool.relationships?.quote_token?.data?.id ?? '') ?? ''
+
+      // Fallback: parse from pool name like "USD₮0 / WETH 0.05%" or "WETH/USDC.e"
       if ((!base || !quote) && poolName.includes('/')) {
-        const [p0, p1] = poolName.split('/').map((s: string) => s.trim())
-        if (!base && p0) base = p0; if (!quote && p1) quote = p1
+        const nameClean = poolName.replace(/\s*\d+\.?\d*%\s*$/, '').trim()
+        const [p0, p1] = nameClean.split('/').map((s: string) => s.trim())
+        if (!base && p0) base = p0
+        if (!quote && p1) quote = p1
       }
       if (!base || !quote) continue
 
-      const tvl = parseFloat(attrs.reserve_in_usd ?? '0'), vol24h = parseFloat(attrs.volume_usd?.h24 ?? '0')
+      // Normalize: USD₮0 → USDT0
+      base  = base.replace('₮', 'T')
+      quote = quote.replace('₮', 'T')
+
+      const tvl    = parseFloat(attrs.reserve_in_usd ?? '0')
+      const vol24h = parseFloat(attrs.volume_usd?.h24 ?? '0')
       if (tvl < 50) continue
 
       const pairIsStable = poolName.toLowerCase().includes('stable') || allStable([base, quote])
       const feeApr = tvl > 0 ? (vol24h * (pairIsStable ? FEE_STABLE : FEE_DEFAULT) * 365 / tvl) * 100 : 0
+
       out.push({ address: addr, base, quote, tvl, vol24h, isCL, isStable: pairIsStable, feeApr })
     }
   }
+
   return out
 }
 
-// ─── Combined Velodrome: on-chain emissions + GeckoTerminal TVL/fees ────────
+// ─── Combined Velodrome: Sugar emissions (on-chain) + GeckoTerminal TVL/fees ─
 async function fetchVelodromeData(): Promise<AprEntry[]> {
-  const [priceResult, poolsResult] = await Promise.allSettled([fetchVeloPrice(), fetchGeckoPools()])
-  const veloPrice  = priceResult.status  === 'fulfilled' ? priceResult.value  : 0
-  const geckoPools = poolsResult.status === 'fulfilled' ? poolsResult.value : []
-  if (geckoPools.length === 0) return []
+  const [xveloPriceResult, geckoResult, sugarResult] = await Promise.allSettled([
+    fetchXveloPrice(),
+    fetchGeckoPools(),
+    fetchSugarPools(),
+  ])
 
-  let emissions = new Map<string, number>()
-  try { emissions = await fetchGaugeEmissions(geckoPools.map(g => g.address)) }
-  catch (e) { console.error('[best-aprs] Gauge emissions failed:', e) }
+  const xveloPrice = xveloPriceResult.status === 'fulfilled' ? xveloPriceResult.value : 0
+  const geckoPools = geckoResult.status   === 'fulfilled' ? geckoResult.value   : []
+  const sugarPools = sugarResult.status   === 'fulfilled' ? sugarResult.value   : []
 
+  if (sugarResult.status === 'rejected')
+    console.error('[best-aprs] Sugar fetch failed:', sugarResult.reason)
+  if (geckoResult.status === 'rejected')
+    console.error('[best-aprs] GeckoTerminal fetch failed:', geckoResult.reason)
+
+  // Build emissions lookup from Sugar (address → XVELO/sec)
+  // Sugar is the authoritative source — no Voter/Gauge RPC calls needed
+  const emissionsMap = new Map<string, number>()
+  for (const p of sugarPools) {
+    if (p.gaugeAlive && p.emissions > 0) {
+      emissionsMap.set(p.lp, p.emissions)
+    }
+  }
+
+  if (geckoPools.length === 0) {
+    console.warn('[best-aprs] No GeckoTerminal pools — Velodrome skipped')
+    return []
+  }
 
   const out: AprEntry[] = []
   for (const g of geckoPools) {
-    const veloPerSec = emissions.get(g.address.toLowerCase()) ?? 0
-    const emissionApr = (veloPerSec > 0 && veloPrice > 0 && g.tvl > 0) ? (veloPerSec * veloPrice * SECONDS_YEAR / g.tvl) * 100 : 0
+    const xveloPerSec  = emissionsMap.get(g.address) ?? 0
+    const emissionApr  = (xveloPerSec > 0 && xveloPrice > 0 && g.tvl > 0)
+      ? (xveloPerSec * xveloPrice * SECONDS_YEAR / g.tvl) * 100
+      : 0
     const totalApr = emissionApr + g.feeApr
+
     if (totalApr <= 0 && g.tvl < 500) continue
     if (totalApr > 50_000) continue
 
     const suffix = g.isStable ? ' (stable)' : g.isCL ? ' (CL)' : ''
     out.push({
-      protocol: g.isCL ? 'Velodrome V3' : 'Velodrome',
-      logo: 'https://icons.llamao.fi/icons/protocols/velodrome-v2?w=48&h=48',
-      url: VELO_URL, tokens: [g.base, g.quote],
-      label: `${g.base}-${g.quote}${suffix}`,
-      apr: Math.round(totalApr * 100) / 100, tvl: g.tvl, type: 'pool', isStable: g.isStable,
+      protocol: g.isCL ? 'Velodrome CL' : 'Velodrome',
+      logo:     'https://icons.llamao.fi/icons/protocols/velodrome-v2?w=48&h=48',
+      url:      VELO_URL,
+      tokens:   [g.base, g.quote],
+      label:    `${g.base}-${g.quote}${suffix}`,
+      apr:      Math.round(totalApr * 100) / 100,
+      tvl:      g.tvl,
+      type:     'pool',
+      isStable: g.isStable,
     })
   }
 
-  const sorted = [...out].sort((a, b) => b.apr - a.apr)
   return out
 }
 
-// ─── InkySwap: native /api/pairs ────────────────────────────────────────────
-// Returns total APR (fees + rewards combined) in the 'apr' field
+// ─── InkySwap: native /api/pairs ─────────────────────────────────────────────
 async function fetchInkySwapData(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
   try {
@@ -269,7 +346,7 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
       signal: AbortSignal.timeout(12_000),
       headers: { Accept: 'application/json' },
     })
-    if (!res.ok) { return out }
+    if (!res.ok) return out
     const data = await res.json()
     const pairs: any[] = Array.isArray(data) ? data : (data?.pairs ?? data?.data ?? [])
 
@@ -278,71 +355,49 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
       const quote = p.token1?.symbol ?? ''
       if (!base || !quote) continue
 
-      const tvl    = parseFloat(p.liquidity_usd ?? '0')
-      const vol24h = parseFloat(p.volume_24h ?? '0')
-      if (tvl < 50) continue
+      const tvl    = parseFloat(p.liquidity_usd ?? p.tvl_usd ?? p.tvl ?? '0')
+      const aprRaw = parseFloat(p.apr ?? p.total_apr ?? '0')
+      if (tvl < 100 || aprRaw <= 0 || aprRaw > 50_000) continue
 
-      // apr field is total APR shown on inkyswap.com (fees + rewards)
-      const apr = parseFloat(p.apr ?? '0')
-      if (apr <= 0 && tvl < 500) continue
-      if (apr > 50_000) continue
-
-      const pairStable = allStable([base, quote])
       out.push({
         protocol: 'InkySwap',
-        logo: 'https://icons.llamao.fi/icons/protocols/inkyswap?w=48&h=48',
-        url: INKY_URL,
-        tokens: [base, quote],
-        label: `${base}-${quote}`,
-        apr: Math.round(apr * 100) / 100,
+        logo:     'https://icons.llamao.fi/icons/protocols/inkyswap?w=48&h=48',
+        url:      INKY_URL,
+        tokens:   [base, quote],
+        label:    `${base}-${quote}`,
+        apr:      Math.round(aprRaw * 100) / 100,
         tvl,
-        type: 'pool',
-        isStable: pairStable,
+        type:     'pool',
+        isStable: allStable([base, quote]),
       })
     }
-
-    const sorted = [...out].sort((a, b) => b.apr - a.apr)
   } catch (e) { console.error('[best-aprs] InkySwap error:', e) }
   return out
 }
 
-// ─── Nado NLP Vault (direct from Nado API) ──────────────────────────────────
-// TVL from nlp_pool_info, APR from archive nlp_snapshots (30-day rolling).
-const NADO_GATEWAY = 'https://gateway.prod.nado.xyz'
-const NADO_ARCHIVE = 'https://archive.prod.nado.xyz/v1'
-
+// ─── Nado vault ──────────────────────────────────────────────────────────────
 async function fetchNadoVault(): Promise<AprEntry[]> {
   try {
-    const headers = { Accept: 'application/json', 'Accept-Encoding': 'gzip', 'Content-Type': 'application/json' }
     const now = Math.floor(Date.now() / 1000)
-    const thirtyDaysAgo = now - 30 * 86400
+    const days30 = 30 * 86400
 
-    // Fetch current pool info + current snapshot + 30-day-ago snapshot in parallel
     const [poolRes, snapNowRes, snapOldRes] = await Promise.all([
-      fetch(`${NADO_GATEWAY}/v1/query?type=nlp_pool_info`, {
-        headers, signal: AbortSignal.timeout(10_000),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-      // Latest snapshot (current NLP price)
-      fetch(NADO_ARCHIVE, {
-        method: 'POST', headers, signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ nlp_snapshots: { limit: 1 } }),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-      // Snapshot from ~30 days ago
-      fetch(NADO_ARCHIVE, {
-        method: 'POST', headers, signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ nlp_snapshots: { max_time: thirtyDaysAgo, limit: 1 } }),
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('https://gateway.prod.nado.xyz/api/v1/pools', { signal: AbortSignal.timeout(10_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&offset=0`, { signal: AbortSignal.timeout(8_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&before=${now - days30}`, { signal: AbortSignal.timeout(8_000) })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
     ])
 
     const pools = poolRes?.data?.nlp_pools ?? []
     if (pools.length === 0) return []
 
-    // Extract NLP supply from pool info for TVL
     let nlpSupply = 0, nlpPriceFromPool = 0
     for (const pool of pools) {
       for (const sp of (pool.subaccount_info?.spot_products ?? [])) {
         if (sp.product_id === 11) {
-          nlpSupply       = parseFloat(sp.state?.total_deposits_normalized ?? '0') / 1e18
+          nlpSupply        = parseFloat(sp.state?.total_deposits_normalized ?? '0') / 1e18
           nlpPriceFromPool = parseFloat(sp.oracle_price_x18 ?? '0') / 1e18
           break
         }
@@ -350,14 +405,12 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
       if (nlpSupply > 0) break
     }
 
-    // Get TVL directly from latest snapshot (more accurate) or fallback to supply × price
     const latestSnap = (snapNowRes?.snapshots ?? [])[0]
     const totalTVL = latestSnap
       ? parseFloat(latestSnap.tvl ?? '0') / 1e18
       : nlpSupply * nlpPriceFromPool
     if (totalTVL < 100) return []
 
-    // Calculate 30-day rolling APR from NLP price snapshots
     let apr = 0
     const currentPrice = latestSnap
       ? parseFloat(latestSnap.oracle_price_x18 ?? '0') / 1e18
@@ -366,16 +419,12 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
     if (oldSnap) {
       const oldPrice = parseFloat(oldSnap.oracle_price_x18 ?? '0') / 1e18
       if (oldPrice > 0 && currentPrice > oldPrice) {
-        // Exact days between snapshots
         const oldTs = parseInt(oldSnap.timestamp ?? '0')
         const newTs = latestSnap ? parseInt(latestSnap.timestamp ?? '0') : now
         const daysBetween = Math.max(1, (newTs - oldTs) / 86400)
-        const yieldPeriod = (currentPrice - oldPrice) / oldPrice
-        apr = yieldPeriod * (365 / daysBetween) * 100
+        apr = ((currentPrice - oldPrice) / oldPrice) * (365 / daysBetween) * 100
       }
     }
-
-    // Fallback: inception-based if snapshots didn't produce a result
     if (apr <= 0 && currentPrice > 1.0) {
       const LAUNCH = new Date('2025-11-20').getTime()
       const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
@@ -384,20 +433,19 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
 
     return [{
       protocol: 'Nado',
-      logo: NADO_LOGO,
-      url: 'https://app.nado.xyz/vault',
-      tokens: ['USDT0'],
-      label: 'NLP Vault',
-      apr: Math.round(apr * 100) / 100,
-      tvl: totalTVL,
-      type: 'vault',
+      logo:     NADO_LOGO,
+      url:      'https://app.nado.xyz/vault',
+      tokens:   ['USDT0'],
+      label:    'NLP Vault',
+      apr:      Math.round(apr * 100) / 100,
+      tvl:      totalTVL,
+      type:     'vault',
       isStable: false,
     }]
   } catch (e) { console.error('[best-aprs] Nado error:', e); return [] }
 }
 
-// ─── DefiLlama (Tydro + Curve on Ink) ───────────────────────────────────────
-// Only fetches Tydro and Curve — Velodrome and InkySwap are handled directly above
+// ─── DefiLlama (Tydro + Curve on Ink) ────────────────────────────────────────
 const LLAMA_SLUGS = new Set(['tydro', 'curve-dex'])
 
 async function fetchDefiLlama(): Promise<AprEntry[]> {
@@ -430,13 +478,11 @@ async function fetchDefiLlama(): Promise<AprEntry[]> {
   return out
 }
 
-// ─── Cache + GET ────────────────────────────────────────────────────────────
+// ─── Cache + GET ──────────────────────────────────────────────────────────────
 
 const SOFT_TTL = 3 * 60 * 1000   // 3 minutes (ms) — consider stale after this
 const HARD_TTL = 10 * 60         // 10 minutes (seconds) — KV auto-deletes
 
-// Inflight dedup stays in-memory — prevents concurrent upstream fetches
-// within the same isolate (still useful even if cache is in KV)
 let inflight: Promise<AprEntry[]> | null = null
 
 async function fetchAllAprs(): Promise<AprEntry[]> {
