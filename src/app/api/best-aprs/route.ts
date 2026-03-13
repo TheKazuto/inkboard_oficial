@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { decodeAbiParameters } from 'viem'
 import { INK_RPC } from '@/lib/ink'
 import { kvGet, kvSet } from '@/lib/kvCache'
+import { getPrice } from '@/lib/priceService'
 
 export const revalidate = 0
 
@@ -52,8 +53,6 @@ const INKY_URL      = 'https://inkyswap.com/liquidity'
 const INKY_API_BASE = 'https://inkyswap.com/api'
 
 // ─── Nado NLP Vault ───────────────────────────────────────────────────────────
-// Requires Accept-Encoding: gzip, br, deflate — Cloudflare Workers fetch()
-// does NOT add this automatically; without it the gateway blocks the request.
 const NADO_GATEWAY = 'https://gateway.prod.nado.xyz'
 const NADO_ARCHIVE = 'https://archive.prod.nado.xyz/v1'
 const NADO_HEADERS = {
@@ -63,14 +62,11 @@ const NADO_HEADERS = {
 }
 
 // ─── Tydro (Aave V3 fork on Ink) ─────────────────────────────────────────────
-// DataProvider.getReserveData(address) slot 5 = liquidityRate in RAY (1e27)
-// supplyAPR% = liquidityRate / 1e27 * 100
 const TYDRO_DATA_PROVIDER = '0x96086C25d13943C80Ff9a19791a40Df6aFC08328' as const
 const TYDRO_URL           = 'https://app.tydro.com'
 const TYDRO_LOGO          = 'https://icons.llamao.fi/icons/protocols/tydro?w=48&h=48'
 const MERKL_URL           = 'https://api.merkl.xyz/v4/opportunities?chainId=57073&mainProtocolId=tydro&campaigns=true&status=LIVE'
 
-// 12 active reserves — verified via Pool.getReservesList() on 2025-03
 const TYDRO_RESERVES: { address: string; symbol: string }[] = [
   { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH'    },
   { address: '0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98', symbol: 'kBTC'    },
@@ -194,7 +190,10 @@ async function fetchSugarPools(): Promise<SugarPool[]> {
   return all
 }
 
-// ─── XVELO price ─────────────────────────────────────────────────────────────
+// ─── XVELO price ──────────────────────────────────────────────────────────────
+// Priority: GeckoTerminal on-chain price (free, no API key)
+// Fallback:  priceService KV cache (velodrome-finance already in ALL_PRICE_IDS)
+// NO direct CoinGecko call — avoids a redundant API hit on every best-aprs request.
 async function fetchXveloPrice(): Promise<number> {
   try {
     const res = await fetch(`${GECKO_BASE}/simple/networks/ink/token_price/${XVELO_INK}`, {
@@ -202,27 +201,18 @@ async function fetchXveloPrice(): Promise<number> {
       headers: { Accept: 'application/json' },
     })
     if (res.ok) {
-      const price = parseFloat((await res.json())?.data?.attributes?.token_prices?.[XVELO_INK.toLowerCase()] ?? '0')
+      const price = parseFloat(
+        (await res.json())?.data?.attributes?.token_prices?.[XVELO_INK.toLowerCase()] ?? '0'
+      )
       if (price > 0) return price
     }
-  } catch { /* fall through */ }
-  try {
-    const cgHeaders: Record<string, string> = { Accept: 'application/json' }
-    const cgKey = process.env.COINGECKO_API_KEY
-    if (cgKey) cgHeaders['x-cg-demo-api-key'] = cgKey
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=velodrome-finance&vs_currencies=usd', {
-      headers: cgHeaders,
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (res.ok) {
-      const price = (await res.json())?.['velodrome-finance']?.usd ?? 0
-      if (price > 0) return price
-    }
-  } catch { /* skip */ }
-  return 0
+  } catch { /* fall through to priceService */ }
+
+  // Fallback: velodrome-finance is already cached in priceService (no extra CoinGecko call)
+  return getPrice('velodrome-finance')
 }
 
-// ─── GeckoTerminal: TVL + vol24h for all Velodrome pools ─────────────────────
+// ─── GeckoTerminal: TVL + vol24h for Velodrome pools ─────────────────────────
 interface GeckoPool {
   address: string; base: string; quote: string
   tvl: number; vol24h: number
@@ -462,8 +452,6 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
 
 // ─── Tydro: on-chain supply APR + Merkl incentives ───────────────────────────
 async function fetchTydroData(): Promise<AprEntry[]> {
-  // getReserveData(address) = 0x35ea6a75
-  // Batch all 12 reserves in a single JSON-RPC batch request
   const batch = TYDRO_RESERVES.map((r, i) => ({
     jsonrpc: '2.0' as const,
     id: i,
@@ -491,10 +479,6 @@ async function fetchTydroData(): Promise<AprEntry[]> {
     }).then(r => r.ok ? r.json() : null).catch(() => null),
   ])
 
-  // getReserveData tuple layout (32 bytes each slot):
-  // [0] unbacked  [1] accruedToTreasury  [2] totalAToken
-  // [3] totalStableDebt  [4] totalVariableDebt
-  // [5] liquidityRate (RAY = 1e27)  [6] variableBorrowRate ...
   const supplyAprs = new Map<string, number>()
   if (onChainRes.status === 'fulfilled' && Array.isArray(onChainRes.value)) {
     for (const item of onChainRes.value) {
@@ -504,13 +488,12 @@ async function fetchTydroData(): Promise<AprEntry[]> {
         const hex = item.result.slice(2)
         const liquidityRate = BigInt('0x' + hex.slice(5 * 64, 6 * 64))
         supplyAprs.set(reserve.address.toLowerCase(), Number(liquidityRate) / 1e27 * 100)
-      } catch { /* skip malformed */ }
+      } catch { /* skip */ }
     }
   } else {
     console.error('[best-aprs] Tydro on-chain failed:', onChainRes.status === 'rejected' ? onChainRes.reason : 'null')
   }
 
-  // Merkl incentive APRs keyed by underlying token address
   const merklAprs = new Map<string, number>()
   if (merklRes.status === 'fulfilled' && Array.isArray(merklRes.value)) {
     for (const opp of merklRes.value) {
