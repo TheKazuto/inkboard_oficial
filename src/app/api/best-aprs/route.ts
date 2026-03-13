@@ -211,16 +211,21 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
 }
 
 // ─── Nado NLP Vault ───────────────────────────────────────────────────────────
-// ─── Nado NLP Vault ───────────────────────────────────────────────────────────
-// Discovered via bundle analysis of https://app.nado.xyz/vault
+// Discovered via bundle analysis of https://app.nado.xyz/vault (module 84791)
 //
-// indexerClient (archive): POST https://archive.prod.nado.xyz/v1
-//   body: { nlp_snapshots: { interval: { count, granularity } } }
-//   → { snapshots: [{ timestamp, oracle_price_x18, tvl, ... }] }
-//   oracle_price_x18 ÷ 1e18 = NLP price USD
-//   tvl              ÷ 1e18 = TVL USD
+// API: POST https://archive.prod.nado.xyz/v1
+//   body: { nlp_snapshots: { interval: { count: 2, granularity: 2592000, max_time: <unix_s> } } }
+//   → { snapshots: [<now>, <30d_ago>] }   (newest first when max_time is provided)
 //
-// Both servers require Accept-Encoding: gzip header (otherwise 403 "Invalid compression headers")
+// Requires Accept-Encoding: gzip (otherwise 403 "Invalid compression headers")
+//
+// Site APR formula (from module 84791):
+//   monthly_ratio = latestPrice / earliestPrice   (BL = simple division, module 91219)
+//   apr = monthly_ratio^12 - 1                    (12 = months per year)
+//
+// Passes max_time = current Unix timestamp so the archive returns exactly 2 snapshots
+// spaced ~30 days apart. Without max_time the API returns all available snapshots
+// which breaks the 30-day window assumption.
 
 const NADO_HEADERS = {
   'Content-Type':    'application/json',
@@ -230,40 +235,46 @@ const NADO_HEADERS = {
 
 async function fetchNadoVault(): Promise<AprEntry[]> {
   try {
-    // Fetch 2 snapshots ~30 days apart to calculate annualised APR
+    const maxTime = Math.floor(Date.now() / 1_000)
+
     const res = await fetch('https://archive.prod.nado.xyz/v1', {
       method:  'POST',
       headers: NADO_HEADERS,
-      body:    JSON.stringify({ nlp_snapshots: { interval: { count: 2, granularity: 2_592_000 } } }),
-      signal:  AbortSignal.timeout(12_000),
+      body:    JSON.stringify({
+        nlp_snapshots: {
+          interval: { count: 2, granularity: 2_592_000, max_time: maxTime },
+        },
+      }),
+      signal: AbortSignal.timeout(12_000),
     })
     if (!res.ok) {
       console.error(`[best-aprs] Nado archive HTTP ${res.status}`)
       return []
     }
 
-    const data    = await res.json()
-    const snaps: any[] = data?.snapshots ?? []
-    if (snaps.length < 1) return []
+    const data              = await res.json()
+    const snaps: any[]      = data?.snapshots ?? []
+    if (snaps.length < 2) return []
 
-    const latest = snaps[0]
-    const older  = snaps[snaps.length - 1]  // oldest in the window (~30d ago)
+    // With max_time, the archive returns exactly 2 snapshots:
+    //   snaps[0] = latest  (at or just before max_time)
+    //   snaps[1] = 30d ago (at or just before max_time - 2592000)
+    const latest   = snaps[0]
+    const earlier  = snaps[1]
 
-    const tvl          = Number(BigInt(latest.tvl ?? '0')) / 1e18
+    const tvl          = Number(BigInt(latest.tvl              ?? '0')) / 1e18
     const priceLatest  = Number(BigInt(latest.oracle_price_x18 ?? '0')) / 1e18
-    const priceOlder   = Number(BigInt(older.oracle_price_x18  ?? '0')) / 1e18
+    const priceEarlier = Number(BigInt(earlier.oracle_price_x18 ?? '0')) / 1e18
 
-    if (tvl < 100 || priceLatest <= 0) return []
+    if (tvl < 100 || priceLatest <= 0 || priceEarlier <= 0) return []
 
-    let apr = 0
-    if (priceOlder > 0 && priceLatest > priceOlder) {
-      const tsLatest    = parseInt(latest.timestamp ?? '0')
-      const tsOlder     = parseInt(older.timestamp  ?? '0')
-      const daysBetween = Math.max(1, (tsLatest - tsOlder) / 86_400)
-      apr = ((priceLatest - priceOlder) / priceOlder) * (365 / daysBetween) * 100
-    }
+    // Exact formula used by Nado's vault page (bundle module 84791):
+    //   ratio = latest / earlier  (monthly return)
+    //   apr   = ratio^12 - 1      (annualised)
+    const ratio = priceLatest / priceEarlier
+    let apr = (Math.pow(ratio, 12) - 1) * 100
 
-    // Fallback: if not enough price history, annualise from launch price of $1.00
+    // Fallback if APR is negative (price declined over 30d window)
     if (apr <= 0 && priceLatest > 1.0) {
       const LAUNCH          = new Date('2025-11-20').getTime()
       const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
