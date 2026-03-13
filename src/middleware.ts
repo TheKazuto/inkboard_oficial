@@ -1,26 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// Fix #15 (BAIXO): Simple in-memory rate limiter for API routes.
-// Runs on the Edge runtime — no extra dependency needed.
-// Limits: 60 requests / minute per IP across all /api/ routes.
-// Stricter limits for expensive routes (approvals-logs, nfts, defi).
-//
-// NOTE: This in-memory store resets on cold start. On Cloudflare Workers,
-// each request may run in a different isolate, so this rate limiter is
-// best-effort. For stricter enforcement, use Cloudflare's native WAF
-// Rate Limiting rules in the dashboard (Security → WAF → Rate limiting).
+// ─── CSP ─────────────────────────────────────────────────────────────────────
+// Applied via middleware because next.config.js headers() does NOT work
+// on Cloudflare Workers with OpenNext.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: http: https:",
+  "connect-src 'self' https: http: wss:",
+  "frame-src 'self' http: https:",
+  "worker-src 'self' blob: https:",
+  "object-src 'none'",
+].join('; ')
 
+function setSecurityHeaders(res: NextResponse): void {
+  res.headers.set('Content-Security-Policy', CSP)
+  res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload')
+  res.headers.set('X-Frame-Options', 'SAMEORIGIN')
+  res.headers.set('X-Content-Type-Options', 'nosniff')
+  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()')
+  res.headers.set('X-XSS-Protection', '0')
+  res.headers.set('X-Permitted-Cross-Domain-Policies', 'none')
+}
+
+// ─── Ad frame headers ────────────────────────────────────────────────────────
+// /api/ad-frame is loaded inside an <iframe> in AdBanner (same-origin).
+// X-Frame-Options: SAMEORIGIN on the framed page itself would block it,
+// so we apply all security headers EXCEPT X-Frame-Options for this route.
+function setAdFrameHeaders(res: NextResponse): void {
+  res.headers.set('Content-Security-Policy', CSP)
+  res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload')
+  // No X-Frame-Options here — intentionally omitted so the iframe can load
+  res.headers.set('X-Content-Type-Options', 'nosniff')
+  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()')
+  res.headers.set('X-XSS-Protection', '0')
+  res.headers.set('X-Permitted-Cross-Domain-Policies', 'none')
+}
+
+// ─── Rate limiter ────────────────────────────────────────────────────────────
 interface RateEntry { count: number; resetAt: number }
 const store = new Map<string, RateEntry>()
+const WINDOW_MS = 60_000
 
-const WINDOW_MS = 60_000  // 1-minute sliding window
-
-// Per-route limits (requests per window per IP)
 const ROUTE_LIMITS: Record<string, number> = {
-  '/api/approvals-logs': 10,  // Blockscout API — conservative
-  '/api/nfts':           10,  // OpenSea + Blockscout — strict
-  '/api/defi':           15,  // many RPC calls per request
-  '/api/best-aprs':      12,  // calls many external APIs
+  '/api/approvals-logs': 10,
+  '/api/nfts':           10,
+  '/api/defi':           15,
+  '/api/best-aprs':      12,
   '/api/transactions':   20,
   '/api/portfolio-history': 20,
   '/api/token-exposure': 30,
@@ -42,14 +72,26 @@ function getClientIp(req: NextRequest): string {
   )
 }
 
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Only rate-limit API routes
-  if (!pathname.startsWith('/api/')) {
-    return NextResponse.next()
+  // Ad frame route: security headers without X-Frame-Options, no rate limiting
+  if (pathname === '/api/ad-frame') {
+    const res = NextResponse.next()
+    setAdFrameHeaders(res)
+    return res
   }
 
+  // Non-API routes: just apply security headers
+  if (!pathname.startsWith('/api/')) {
+    const res = NextResponse.next()
+    setSecurityHeaders(res)
+    return res
+  }
+
+  // API routes: security headers + rate limiting
   const ip    = getClientIp(req)
   const key   = `${ip}::${pathname}`
   const now   = Date.now()
@@ -58,7 +100,12 @@ export function middleware(req: NextRequest) {
   const entry = store.get(key)
   if (!entry || now > entry.resetAt) {
     store.set(key, { count: 1, resetAt: now + WINDOW_MS })
-    return addRateLimitHeaders(NextResponse.next(), 1, limit, now + WINDOW_MS)
+    const res = NextResponse.next()
+    setSecurityHeaders(res)
+    res.headers.set('X-RateLimit-Limit',     String(limit))
+    res.headers.set('X-RateLimit-Remaining', String(limit - 1))
+    res.headers.set('X-RateLimit-Reset',     String(Math.floor((now + WINDOW_MS) / 1000)))
+    return res
   }
 
   entry.count++
@@ -79,21 +126,15 @@ export function middleware(req: NextRequest) {
     )
   }
 
-  return addRateLimitHeaders(NextResponse.next(), entry.count, limit, entry.resetAt)
-}
-
-function addRateLimitHeaders(
-  res: NextResponse,
-  count: number,
-  limit: number,
-  resetAt: number,
-): NextResponse {
+  const res = NextResponse.next()
+  setSecurityHeaders(res)
   res.headers.set('X-RateLimit-Limit',     String(limit))
-  res.headers.set('X-RateLimit-Remaining', String(Math.max(0, limit - count)))
-  res.headers.set('X-RateLimit-Reset',     String(Math.floor(resetAt / 1000)))
+  res.headers.set('X-RateLimit-Remaining', String(Math.max(0, limit - entry.count)))
+  res.headers.set('X-RateLimit-Reset',     String(Math.floor(entry.resetAt / 1000)))
   return res
 }
 
+// Match ALL routes (pages + API) — excludes only static assets
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/((?!_next/static|_next/image|favicon\\.ico|apple-touch-icon\\.png|ink-logo\\.jpg|inkboard-logo\\.png|ads\\.txt).*)',
 }
