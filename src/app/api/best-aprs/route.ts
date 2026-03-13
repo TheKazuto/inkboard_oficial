@@ -191,9 +191,9 @@ async function fetchSugarPools(): Promise<SugarPool[]> {
 }
 
 // ─── XVELO price ──────────────────────────────────────────────────────────────
-// Priority: GeckoTerminal on-chain price (free, no API key)
-// Fallback:  priceService KV cache (velodrome-finance already in ALL_PRICE_IDS)
-// NO direct CoinGecko call — avoids a redundant API hit on every best-aprs request.
+// Priority: GeckoTerminal (free, no API key needed)
+// Fallback:  priceService KV cache — velodrome-finance already in ALL_PRICE_IDS,
+//            so this hits KV and never makes an extra CoinGecko call.
 async function fetchXveloPrice(): Promise<number> {
   try {
     const res = await fetch(`${GECKO_BASE}/simple/networks/ink/token_price/${XVELO_INK}`, {
@@ -206,13 +206,14 @@ async function fetchXveloPrice(): Promise<number> {
       )
       if (price > 0) return price
     }
-  } catch { /* fall through to priceService */ }
+  } catch { /* fall through */ }
 
-  // Fallback: velodrome-finance is already cached in priceService (no extra CoinGecko call)
   return getPrice('velodrome-finance')
 }
 
 // ─── GeckoTerminal: TVL + vol24h for Velodrome pools ─────────────────────────
+// Only page 1 per dex (2 requests total) to stay well within GeckoTerminal's
+// rate limit. Adding more pages would risk 429s that empty geckoPools entirely.
 interface GeckoPool {
   address: string; base: string; quote: string
   tvl: number; vol24h: number
@@ -223,22 +224,18 @@ async function fetchGeckoPools(): Promise<GeckoPool[]> {
   const out: GeckoPool[] = [], seen = new Set<string>()
   const FEE_STABLE = 0.0001, FEE_DEFAULT = 0.003
 
-  const pageFetches: Promise<{ dexId: string; pools: any[]; included: any[] }>[] = []
-  for (const dexId of VELO_DEX_IDS) {
-    for (let page = 1; page <= 3; page++) {
-      pageFetches.push(
-        fetch(
-          `${GECKO_BASE}/networks/ink/dexes/${dexId}/pools?page=${page}&sort=h24_volume_usd_desc&include=base_token,quote_token`,
-          { signal: AbortSignal.timeout(10_000), headers: { Accept: 'application/json' } }
-        )
-          .then(r => r.ok ? r.json() : null)
-          .then(json => ({ dexId, pools: json?.data ?? [], included: json?.included ?? [] }))
-          .catch(() => ({ dexId, pools: [], included: [] }))
+  // One request per DEX — 2 total, safe within rate limits
+  const results = await Promise.all(
+    VELO_DEX_IDS.map(dexId =>
+      fetch(
+        `${GECKO_BASE}/networks/ink/dexes/${dexId}/pools?page=1&sort=h24_volume_usd_desc&include=base_token,quote_token`,
+        { signal: AbortSignal.timeout(10_000), headers: { Accept: 'application/json' } }
       )
-    }
-  }
-
-  const results = await Promise.all(pageFetches)
+        .then(r => r.ok ? r.json() : null)
+        .then(json => ({ dexId, pools: json?.data ?? [], included: json?.included ?? [] }))
+        .catch(() => ({ dexId, pools: [], included: [] }))
+    )
+  )
 
   const tokenSymbols = new Map<string, string>()
   for (const { included } of results)
@@ -304,7 +301,10 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
   for (const p of sugarPools)
     if (p.gaugeAlive && p.emissions > 0) emissionsMap.set(p.lp, p.emissions)
 
-  if (geckoPools.length === 0) return []
+  if (geckoPools.length === 0) {
+    console.error('[best-aprs] GeckoTerminal returned 0 pools — Velodrome data unavailable')
+    return []
+  }
 
   const out: AprEntry[] = []
   for (const g of geckoPools) {
@@ -479,6 +479,7 @@ async function fetchTydroData(): Promise<AprEntry[]> {
     }).then(r => r.ok ? r.json() : null).catch(() => null),
   ])
 
+  // getReserveData tuple slots: [5] = liquidityRate in RAY (1e27)
   const supplyAprs = new Map<string, number>()
   if (onChainRes.status === 'fulfilled' && Array.isArray(onChainRes.value)) {
     for (const item of onChainRes.value) {
