@@ -211,59 +211,63 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
 }
 
 // ─── Nado NLP Vault ───────────────────────────────────────────────────────────
+// ─── Nado NLP Vault ───────────────────────────────────────────────────────────
+// Discovered via bundle analysis of https://app.nado.xyz/vault
+//
+// indexerClient (archive): POST https://archive.prod.nado.xyz/v1
+//   body: { nlp_snapshots: { interval: { count, granularity } } }
+//   → { snapshots: [{ timestamp, oracle_price_x18, tvl, ... }] }
+//   oracle_price_x18 ÷ 1e18 = NLP price USD
+//   tvl              ÷ 1e18 = TVL USD
+//
+// Both servers require Accept-Encoding: gzip header (otherwise 403 "Invalid compression headers")
+
+const NADO_HEADERS = {
+  'Content-Type':    'application/json',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Accept':          'application/json',
+}
+
 async function fetchNadoVault(): Promise<AprEntry[]> {
   try {
-    const now    = Math.floor(Date.now() / 1000)
-    const days30 = 30 * 86400
-
-    const [poolRes, snapNowRes, snapOldRes] = await Promise.all([
-      fetch('https://gateway.prod.nado.xyz/api/v1/pools', { signal: AbortSignal.timeout(10_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&offset=0', { signal: AbortSignal.timeout(8_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`https://gateway.prod.nado.xyz/api/v1/nlp/snapshots?limit=1&before=${now - days30}`, { signal: AbortSignal.timeout(8_000) })
-        .then(r => r.ok ? r.json() : null).catch(() => null),
-    ])
-
-    const pools = poolRes?.data?.nlp_pools ?? []
-    if (pools.length === 0) return []
-
-    let nlpSupply = 0, nlpPriceFromPool = 0
-    for (const pool of pools) {
-      for (const sp of (pool.subaccount_info?.spot_products ?? [])) {
-        if (sp.product_id === 11) {
-          nlpSupply        = parseFloat(sp.state?.total_deposits_normalized ?? '0') / 1e18
-          nlpPriceFromPool = parseFloat(sp.oracle_price_x18 ?? '0') / 1e18
-          break
-        }
-      }
-      if (nlpSupply > 0) break
+    // Fetch 2 snapshots ~30 days apart to calculate annualised APR
+    const res = await fetch('https://archive.prod.nado.xyz/v1', {
+      method:  'POST',
+      headers: NADO_HEADERS,
+      body:    JSON.stringify({ nlp_snapshots: { interval: { count: 2, granularity: 2_592_000 } } }),
+      signal:  AbortSignal.timeout(12_000),
+    })
+    if (!res.ok) {
+      console.error(`[best-aprs] Nado archive HTTP ${res.status}`)
+      return []
     }
 
-    const latestSnap = (snapNowRes?.snapshots ?? [])[0]
-    const totalTVL = latestSnap
-      ? parseFloat(latestSnap.tvl ?? '0') / 1e18
-      : nlpSupply * nlpPriceFromPool
-    if (totalTVL < 100) return []
+    const data    = await res.json()
+    const snaps: any[] = data?.snapshots ?? []
+    if (snaps.length < 1) return []
+
+    const latest = snaps[0]
+    const older  = snaps[snaps.length - 1]  // oldest in the window (~30d ago)
+
+    const tvl          = Number(BigInt(latest.tvl ?? '0')) / 1e18
+    const priceLatest  = Number(BigInt(latest.oracle_price_x18 ?? '0')) / 1e18
+    const priceOlder   = Number(BigInt(older.oracle_price_x18  ?? '0')) / 1e18
+
+    if (tvl < 100 || priceLatest <= 0) return []
 
     let apr = 0
-    const currentPrice = latestSnap
-      ? parseFloat(latestSnap.oracle_price_x18 ?? '0') / 1e18
-      : nlpPriceFromPool
-    const oldSnap = (snapOldRes?.snapshots ?? [])[0]
-    if (oldSnap) {
-      const oldPrice = parseFloat(oldSnap.oracle_price_x18 ?? '0') / 1e18
-      if (oldPrice > 0 && currentPrice > oldPrice) {
-        const oldTs       = parseInt(oldSnap.timestamp ?? '0')
-        const newTs       = latestSnap ? parseInt(latestSnap.timestamp ?? '0') : now
-        const daysBetween = Math.max(1, (newTs - oldTs) / 86400)
-        apr = ((currentPrice - oldPrice) / oldPrice) * (365 / daysBetween) * 100
-      }
+    if (priceOlder > 0 && priceLatest > priceOlder) {
+      const tsLatest    = parseInt(latest.timestamp ?? '0')
+      const tsOlder     = parseInt(older.timestamp  ?? '0')
+      const daysBetween = Math.max(1, (tsLatest - tsOlder) / 86_400)
+      apr = ((priceLatest - priceOlder) / priceOlder) * (365 / daysBetween) * 100
     }
-    if (apr <= 0 && currentPrice > 1.0) {
+
+    // Fallback: if not enough price history, annualise from launch price of $1.00
+    if (apr <= 0 && priceLatest > 1.0) {
       const LAUNCH          = new Date('2025-11-20').getTime()
       const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
-      apr = (currentPrice - 1.0) * (365 / daysSinceLaunch) * 100
+      apr = ((priceLatest - 1.0) / 1.0) * (365 / daysSinceLaunch) * 100
     }
 
     return [{
@@ -273,11 +277,14 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
       tokens:   ['USDT0'],
       label:    'NLP Vault',
       apr:      Math.round(apr * 100) / 100,
-      tvl:      totalTVL,
+      tvl,
       type:     'vault',
       isStable: false,
     }]
-  } catch (e) { console.error('[best-aprs] Nado error:', e); return [] }
+  } catch (e) {
+    console.error('[best-aprs] Nado error:', e)
+    return []
+  }
 }
 
 // ─── Tydro: on-chain supply APR + Merkl incentives ───────────────────────────
