@@ -239,7 +239,7 @@ function DeFiPositions() {
             const value      = pos.netValueUSD ?? 0
             const apy        = getApy(pos)
             const percentage = total > 0 ? (value / total) * 100 : 0
-            const label      = pos.label ?? pos.asset ?? ''
+            const label      = pos.label ?? ''
 
             return (
               <div key={`${pos.protocol}-${i}`} className="space-y-1.5">
