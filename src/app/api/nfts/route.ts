@@ -38,6 +38,14 @@ function sanitizeImage(raw: string | null | undefined): string | null {
   return isSafeMetaUrl(resolved) ? resolved : null
 }
 
+function sanitizeName(raw: string | null | undefined): string {
+  if (!raw) return ''
+  return String(raw)
+    .replace(/[<>&"'`]/g, '')  // strip HTML/injection chars from NFT metadata
+    .trim()
+    .slice(0, 100)
+}
+
 // ─── OpenSea API ─────────────────────────────────────────────────────────────
 const OPENSEA_API = 'https://api.opensea.io/api/v2'
 const OPENSEA_CHAIN = 'ink'
@@ -55,8 +63,9 @@ async function fetchNFTsViaOpenSea(address: string, apiKey: string, ethPrice: nu
   const items: any[] = data.nfts ?? []
   if (!items.length) return { nfts: [], nftValue: 0, total: 0 }
 
-  // Collect unique collection slugs for floor prices
-  const slugs = [...new Set(items.map((n: any) => n.collection).filter(Boolean))] as string[]
+  // Collect unique collection slugs for floor prices (using Set to avoid O(n²) findIndex)
+  const slugsSet = new Set(items.map((n: any) => n.collection).filter(Boolean))
+  const slugs = [...slugsSet] as string[]
   const floorMap = await fetchOpenSeaFloorPrices(slugs, apiKey)
 
   const nfts = items.map((nft: any) => {
@@ -222,7 +231,7 @@ export async function GET(req: NextRequest) {
         tokenId:    tokenId.toString(),
         collection: cm.name || `${contract.slice(0, 6)}...${contract.slice(-4)}`,
         symbol:     cm.symbol,
-        name:       meta?.name ?? `#${tokenId}`,
+        name:       sanitizeName(meta?.name) || `#${tokenId}`,
         image:      sanitizeImage(meta?.image ?? meta?.image_url ?? null),
         floorETH:   0,
         floorUSD:   0,

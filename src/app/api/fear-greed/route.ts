@@ -1,29 +1,39 @@
 import { NextResponse } from 'next/server'
+import { kvGet, kvSet } from '@/lib/kvCache'
 
-export const revalidate = 3600 // atualiza 1x por hora (o índice muda diariamente)
+export const revalidate = 0
+
+const CACHE_KEY = 'fear-greed-index'
+const SOFT_TTL  = 60 * 60 * 1000  // 1 hour (ms)
+const HARD_TTL  = 4 * 60 * 60     // 4 hours (seconds)
 
 export async function GET() {
+  // Fast path — serve from KV if fresh
+  const cached = await kvGet<unknown>(CACHE_KEY, SOFT_TTL)
+  if (cached.data && cached.fresh) {
+    return NextResponse.json(cached.data, { headers: { 'X-Cache': 'HIT' } })
+  }
+
   try {
-    // Busca os últimos 30 dias para ter: hoje, ontem, semana passada e mês passado
+    // Fetch last 30 days: index[0] = today, [1] = yesterday, [6] = ~week ago, [29] = ~month ago
     const res = await fetch(
       'https://api.alternative.me/fng/?limit=30&format=json',
-      { next: { revalidate: 3600 } }
+      { signal: AbortSignal.timeout(10_000) }
     )
 
-    if (!res.ok) throw new Error('Alternative.me error')
+    if (!res.ok) throw new Error(`Alternative.me HTTP ${res.status}`)
 
     const json = await res.json()
     const data = json.data
 
-    if (!data || data.length === 0) throw new Error('empty data')
+    if (!data || data.length === 0) throw new Error('No data in response')
 
-    // data[0] = hoje, data[1] = ontem, data[6] = ~semana, data[29] = ~mês
     const now      = data[0]
     const yesterday = data[1] ?? data[0]
     const weekAgo  = data[6] ?? data[0]
     const monthAgo = data[29] ?? data[0]
 
-    return NextResponse.json({
+    const result = {
       now: {
         value: parseInt(now.value),
         label: now.value_classification,
@@ -40,8 +50,14 @@ export async function GET() {
         value: parseInt(monthAgo.value),
         label: monthAgo.value_classification,
       },
-    })
-  } catch {
-    return NextResponse.json({ error: 'Failed to fetch' }, { status: 500 })
+    }
+
+    await kvSet(CACHE_KEY, result, HARD_TTL)
+    return NextResponse.json(result, { headers: { 'X-Cache': 'MISS' } })
+  } catch (err) {
+    console.error('[fear-greed] fetch error:', err)
+    // Return stale data on upstream error rather than propagating error
+    if (cached.data) return NextResponse.json(cached.data, { headers: { 'X-Cache': 'STALE' } })
+    return NextResponse.json({ error: 'Failed to fetch fear & greed index' }, { status: 502 })
   }
 }

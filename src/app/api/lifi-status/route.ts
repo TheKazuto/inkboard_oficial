@@ -12,7 +12,8 @@ export async function GET(req: NextRequest) {
     if (ALLOWED_PARAMS.has(key)) params.set(key, val)
   }
 
-  if (!params.get('txHash')) {
+  const txHash = params.get('txHash')
+  if (!txHash || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
     return NextResponse.json({ status: 'INVALID' }, { status: 400 })
   }
 

@@ -9,8 +9,8 @@ import { CURRENCIES, CURRENCY_LABELS } from '@/contexts/PreferencesContext'
 import { User, Copy, ExternalLink, Shield, CheckCircle, Lock, Sun, Moon } from 'lucide-react'
 import { shortenAddr } from '@/contexts/TransactionContext'
 
-// Single stable object reference — avoids creating a new object on every render
-const SORA = { fontFamily: 'Sora, sans-serif' } as const
+// Import from shared styles instead of defining locally
+import { JAKARTA } from '@/lib/styles'
 
 export default function AccountPage() {
   const [copied, setCopied] = useState(false)
@@ -33,7 +33,7 @@ export default function AccountPage() {
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
       {/* Header */}
       <div>
-        <h1 className="font-display text-2xl font-bold text-gray-900" style={SORA}>
+        <h1 className="font-display text-2xl font-bold text-gray-900" style={JAKARTA}>
           Account
         </h1>
         <p className="text-gray-500 text-sm mt-1">Manage your profile and preferences</p>
@@ -48,7 +48,7 @@ export default function AccountPage() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <p className="text-white font-display font-bold text-lg" style={SORA}>My Wallet</p>
+              <p className="text-white font-display font-bold text-lg" style={JAKARTA}>My Wallet</p>
               {hasNFT && (
                 <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-xs font-semibold">
                   ⭐ NFT Holder
@@ -96,7 +96,7 @@ export default function AccountPage() {
             {hasNFT ? <Shield size={22} className="text-emerald-600" /> : <Lock size={22} className="text-violet-500" />}
           </div>
           <div className="flex-1">
-            <h3 className="font-display font-semibold text-gray-800" style={SORA}>
+            <h3 className="font-display font-semibold text-gray-800" style={JAKARTA}>
               {hasNFT ? '✅ Premium Access Unlocked' : 'InkBoard NFT Access'}
             </h3>
             {hasNFT ? (
@@ -128,7 +128,7 @@ export default function AccountPage() {
 
       {/* Settings */}
       <div className="card p-5">
-        <h2 className="font-display font-semibold text-gray-800 mb-4" style={SORA}>Preferences</h2>
+        <h2 className="font-display font-semibold text-gray-800 mb-4" style={JAKARTA}>Preferences</h2>
         <div className="space-y-4">
           {/* Theme */}
           <div className="flex items-center justify-between">
@@ -231,7 +231,7 @@ export default function AccountPage() {
 
       {/* About */}
       <div className="card p-5">
-        <h2 className="font-display font-semibold text-gray-800 mb-3" style={SORA}>About InkBoard</h2>
+        <h2 className="font-display font-semibold text-gray-800 mb-3" style={JAKARTA}>About InkBoard</h2>
         <p className="text-sm text-gray-500 mb-3">
           InkBoard is the premier portfolio dashboard for the Ink ecosystem. Track your assets, DeFi positions, and NFTs in one place.
         </p>

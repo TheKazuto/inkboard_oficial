@@ -3,7 +3,7 @@
 import { useWallet }    from '@/contexts/WalletContext'
 import { usePortfolio } from '@/contexts/PortfolioContext'
 import { RefreshCw, TrendingUp, TrendingDown, Zap, ExternalLink, AlertCircle } from 'lucide-react'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 import { usePreferences } from '@/contexts/PreferencesContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -327,7 +327,7 @@ function SummaryBanner({
       <div className="px-6 pt-5 pb-4" style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #6d28d9 100%)' }}>
         <p className="text-violet-200 text-xs font-medium uppercase tracking-wide mb-1">Total DeFi Value</p>
         <div className="flex items-end gap-3">
-          <p className="font-display text-4xl font-bold text-white" style={SORA}>
+          <p className="font-display text-4xl font-bold text-white" style={JAKARTA}>
             {fmtUSD(netValueUSD)}
           </p>
           {totalDebtUSD > 0 && (
@@ -398,7 +398,7 @@ export default function DefiPage() {
       {/* ── Page Header ── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-800" style={SORA}>
+          <h1 className="text-xl font-bold text-gray-800" style={JAKARTA}>
             DeFi Positions
           </h1>
           <p className="text-gray-400 text-sm mt-0.5">

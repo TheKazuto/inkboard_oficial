@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { INK_RPC, INK_RPC_SECONDARY } from '@/lib/ink'
+import { INK_RPC, INK_RPC_SECONDARY, rpcBatch, STABLECOINS, NADO_LOGO, TYDRO_DATA_PROVIDER } from '@/lib/ink'
 import { kvGet, kvSet } from '@/lib/kvCache'
 
 export const revalidate = 0
@@ -17,22 +17,13 @@ export interface AprEntry {
   isStable:   boolean
 }
 
-// ─── Stablecoin classification ──────────────────────────────────────────────
-const STABLECOINS = new Set([
-  'USDC', 'USDC.E', 'USDT', 'USDT0', 'DAI', 'FRAX', 'FRXUSD', 'SFRXUSD',
-  'CRVUSD', 'BUSD', 'TUSD', 'LUSD', 'MIM', 'USD1', 'LVUSD', 'USDE', 'SUSDE',
-  'DOLA', 'GUSD', 'SUSD', 'USDP', 'PYUSD', 'FDUSD', 'USDG', 'OUSDT',
-  'OUSD', 'OUSDM',
-])
-
+// ─── Stablecoin classification (STABLECOINS set imported from @/lib/ink) ────
 function isStable(sym: string): boolean {
   return STABLECOINS.has(sym.toUpperCase().replace('₮', 'T'))
 }
 function allStable(tokens: string[]): boolean {
   return tokens.length > 0 && tokens.every(isStable)
 }
-
-const NADO_LOGO = '/nado-logo.jpg'
 
 // ─── Velodrome on Ink — via vfat.io aggregator API ───────────────────────────
 // Source: https://api.vfat.io/openapi.json → GET /v4/farms?chainId=57073
@@ -46,9 +37,10 @@ const INKY_URL      = 'https://inkyswap.com/liquidity'
 const INKY_API_BASE = 'https://inkyswap.com/api'
 
 // ─── Tydro (Aave V3 fork on Ink) ─────────────────────────────────────────────
-const TYDRO_DATA_PROVIDER = '0x96086C25d13943C80Ff9a19791a40Df6aFC08328' as const
-const TYDRO_URL           = 'https://app.tydro.com'
+// TYDRO_DATA_PROVIDER imported from @/lib/ink
+const TYDRO_URL  = 'https://app.tydro.com'
 const TYDRO_LOGO          = 'https://icons.llamao.fi/icons/protocols/tydro?w=48&h=48'
+const TYDRO_LAUNCH_DATE   = new Date('2025-11-20')
 const MERKL_URL           = 'https://api.merkl.xyz/v4/opportunities?chainId=57073&mainProtocolId=tydro&campaigns=true&status=LIVE'
 
 const TYDRO_RESERVES: { address: string; symbol: string }[] = [
@@ -169,7 +161,6 @@ async function fetchVelodromeData(): Promise<AprEntry[]> {
     })
   }
 
-  console.log(`[best-aprs] Velodrome: ${out.length} pools via vfat API`)
   return out
 }
 
@@ -220,7 +211,6 @@ async function fetchInkySwapData(): Promise<AprEntry[]> {
         isStable: allStable([base, quote]),
       })
     }
-    console.log(`[best-aprs] InkySwap: ${out.length} pools from /api/pairs`)
   } catch (e) { console.error('[best-aprs] InkySwap error:', e) }
   return out
 }
@@ -291,8 +281,7 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
 
     // Fallback if APR is negative (price declined over 30d window)
     if (apr <= 0 && priceLatest > 1.0) {
-      const LAUNCH          = new Date('2025-11-20').getTime()
-      const daysSinceLaunch = Math.max(1, (Date.now() - LAUNCH) / 86_400_000)
+      const daysSinceLaunch = Math.max(1, (Date.now() - TYDRO_LAUNCH_DATE.getTime()) / 86_400_000)
       apr = ((priceLatest - 1.0) / 1.0) * (365 / daysSinceLaunch) * 100
     }
 
@@ -317,24 +306,6 @@ async function fetchNadoVault(): Promise<AprEntry[]> {
 // getReserveData(address) slot [5] = liquidityRate in RAY (÷1e27 = APR%)
 // Confirmed on-chain: WETH ~1.7%, USDT0 ~1.5%, USDG ~2.2%, GHO ~3.2%, USDC ~1.4%, USDe ~9.1%
 
-async function tydroRpcBatch(rpcUrl: string, batch: object[]): Promise<any[] | null> {
-  try {
-    const res = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15_000),
-    })
-    if (!res.ok) return null
-    const data = await res.json()
-    return Array.isArray(data) ? data : null
-  } catch (e) {
-    console.error(`[best-aprs] Tydro RPC ${rpcUrl} failed:`, e)
-    return null
-  }
-}
-
 async function fetchTydroData(): Promise<AprEntry[]> {
   const batch = TYDRO_RESERVES.map((r, i) => ({
     jsonrpc: '2.0' as const,
@@ -351,10 +322,24 @@ async function fetchTydroData(): Promise<AprEntry[]> {
 
   const [rpcResults, merklRes] = await Promise.allSettled([
     (async () => {
-      const primary = await tydroRpcBatch(INK_RPC, batch)
-      if (primary) return primary
+      const primary = await rpcBatch(batch, 15_000)
+      if (primary && primary.length > 0) return primary
       console.warn('[best-aprs] Tydro: primary RPC failed, trying secondary')
-      return tydroRpcBatch(INK_RPC_SECONDARY, batch)
+      try {
+        const res = await fetch(INK_RPC_SECONDARY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(15_000),
+        })
+        if (!res.ok) return null
+        const data = await res.json()
+        return Array.isArray(data) ? data : null
+      } catch (e) {
+        console.error('[best-aprs] Tydro secondary RPC failed:', e)
+        return null
+      }
     })(),
     fetch(MERKL_URL, {
       headers: { Accept: 'application/json' },
@@ -379,7 +364,6 @@ async function fetchTydroData(): Promise<AprEntry[]> {
     console.error('[best-aprs] Tydro on-chain failed (both RPCs):',
       rpcResults.status === 'rejected' ? rpcResults.reason : 'null from both RPCs')
   }
-  console.log(`[best-aprs] Tydro: ${supplyAprs.size}/${TYDRO_RESERVES.length} reserves with supply APR`)
 
   // Merkl: additional incentive APR per reserve token address
   const merklAprs = new Map<string, number>()
@@ -419,6 +403,9 @@ async function fetchTydroData(): Promise<AprEntry[]> {
 }
 
 // ─── Curve on Ink: DefiLlama ─────────────────────────────────────────────────
+// ~7 days at ~2s/block on Ink Network
+const CURVE_BLOCK_SCAN_RANGE = 195_000
+
 async function fetchCurveData(): Promise<AprEntry[]> {
   const out: AprEntry[] = []
   try {
@@ -453,6 +440,9 @@ async function fetchCurveData(): Promise<AprEntry[]> {
 const SOFT_TTL = 3 * 60 * 1000  // 3 min (ms) — stale threshold
 const HARD_TTL = 10 * 60        // 10 min (s)  — KV expiry
 
+// Note: on Cloudflare Workers each request may run in a different isolate,
+// so `inflight` only deduplicates concurrent requests within the SAME isolate.
+// Cross-isolate deduplication relies on the KV cache hit at the top of GET().
 let inflight: Promise<AprEntry[]> | null = null
 
 async function fetchAllAprs(): Promise<AprEntry[]> {

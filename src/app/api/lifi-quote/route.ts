@@ -24,6 +24,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: 'Missing required parameters' }, { status: 400 })
   }
 
+  // Validate parameter values
+  const fromAmount = params.get('fromAmount')!
+  if (!/^\d+$/.test(fromAmount) || fromAmount === '0') {
+    return NextResponse.json({ message: 'Invalid fromAmount: must be a positive integer string' }, { status: 400 })
+  }
+
+  const slippage = params.get('slippage')
+  if (slippage !== null) {
+    const s = parseFloat(slippage)
+    if (isNaN(s) || s < 0 || s > 0.5) {
+      return NextResponse.json({ message: 'Invalid slippage: must be between 0 and 0.5' }, { status: 400 })
+    }
+  }
+
+  const toAddress = params.get('toAddress')
+  if (toAddress && !/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
+    return NextResponse.json({ message: 'Invalid toAddress format' }, { status: 400 })
+  }
+
   try {
     const res = await fetch(`${LIFI_API}/quote?${params}`, {
       headers: { 'Accept': 'application/json' },

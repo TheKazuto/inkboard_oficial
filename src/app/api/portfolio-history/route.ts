@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { KNOWN_TOKENS, rpcBatch, buildBalanceOfCall } from '@/lib/ink'
-import { kvGet, kvSet } from '@/lib/kvCache'
+import { fetchPriceHistory } from '@/lib/priceService'
 
 export const revalidate = 0
 
 // ─── Balance fetching (single RPC batch) ─────────────────────────────────────
 async function fetchAllBalances(address: string): Promise<{
-  native: number
+  nativeBalance: number
   tokens: number[]
 }> {
   const nativeCall = {
@@ -20,7 +20,7 @@ async function fetchAllBalances(address: string): Promise<{
   try {
     const results      = await rpcBatch([nativeCall, ...erc20Calls], 12_000)
     const nativeResult = results.find((r: any) => r.id === 'native')
-    const native       = nativeResult?.result
+    const nativeBalance       = nativeResult?.result
       ? Number(BigInt(nativeResult.result)) / 1e18
       : 0
 
@@ -31,49 +31,9 @@ async function fetchAllBalances(address: string): Promise<{
       return Number(BigInt(raw)) / Math.pow(10, t.decimals)
     })
 
-    return { native, tokens }
+    return { nativeBalance, tokens }
   } catch {
-    return { native: 0, tokens: KNOWN_TOKENS.map(() => 0) }
-  }
-}
-
-// ─── Price history ─────────────────────────────────────────────────────────────
-// KV cache: shared across all users — one CoinGecko call per hour per {coinId}:{days}
-// pair, regardless of how many wallets are viewed.
-// SOFT_TTL = 1h  →  fresh window (serve from cache without upstream call)
-// HARD_TTL = 2h  →  KV auto-expiry (stale fallback stays available 1h after soft miss)
-
-const PH_SOFT_TTL = 60 * 60 * 1000  // 1 hour (ms)
-const PH_HARD_TTL = 2 * 60 * 60     // 2 hours (seconds)
-
-async function fetchPriceHistory(coinId: string, days: number): Promise<[number, number][]> {
-  const cacheKey = `ph:${coinId}:${days}`
-
-  // Fast path — serve from KV if fresh
-  const cached = await kvGet<[number, number][]>(cacheKey, PH_SOFT_TTL)
-  if (cached.data && cached.fresh) return cached.data
-
-  try {
-    const apiKey  = process.env.COINGECKO_API_KEY
-    const headers: Record<string, string> = { 'Accept': 'application/json' }
-    if (apiKey) headers['x-cg-demo-api-key'] = apiKey
-
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=daily`
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
-    if (!res.ok) throw new Error(`CoinGecko ${res.status}`)
-
-    const data = await res.json()
-    const prices: [number, number][] = data?.prices ?? []
-
-    if (prices.length > 0) {
-      await kvSet(cacheKey, prices, PH_HARD_TTL)
-    }
-
-    return prices
-  } catch (e) {
-    console.error(`[portfolio-history] fetchPriceHistory(${coinId}, ${days}) failed:`, e)
-    // Return stale data if available rather than empty
-    return cached.data ?? []
+    return { nativeBalance: 0, tokens: KNOWN_TOKENS.map(() => 0) }
   }
 }
 
@@ -91,10 +51,10 @@ export async function GET(req: NextRequest) {
 
   try {
     // 1. Fetch all current balances in a single RPC batch
-    const { native: monBalance, tokens: tokenBalances } = await fetchAllBalances(address)
+    const { nativeBalance, tokens: tokenBalances } = await fetchAllBalances(address)
 
     const balances: Record<string, number> = {}
-    if (monBalance > 0.0001) balances['ethereum'] = monBalance
+    if (nativeBalance > 0.0001) balances['ethereum'] = nativeBalance
     KNOWN_TOKENS.forEach((t, i) => {
       if (tokenBalances[i] > 0.0001) balances[t.coingeckoId] = tokenBalances[i]
     })

@@ -1,23 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { INK_RPC as RPC } from '@/lib/ink'
+import { INK_RPC as RPC, KNOWN_TOKENS } from '@/lib/ink'
 
 export const revalidate = 0
 
 // ─── Blockscout API base ────────────────────────────────────────────────────
 const BLOCKSCOUT = 'https://explorer.inkonchain.com/api/v2'
 
-// ─── Known token map for symbol resolution in RPC fallback ──────────────────
-const TOKEN_MAP: Record<string, { symbol: string; decimals: number }> = {
-  '0x4200000000000000000000000000000000000006': { symbol: 'WETH',    decimals: 18 },
-  '0xf1815bd50389c46847f0bda824ec8da914045d14': { symbol: 'USDC.e',  decimals: 6  },
-  '0x0200c29006150606b650577bbe7b6248f58470c1': { symbol: 'USDT0',   decimals: 6  },
-  '0x39fec550cc6ddced810eccfa9b2931b4b5f2344d': { symbol: 'crvUSD',  decimals: 18 },
-  '0x80eede496655fb9047dd39d9f418d5483ed600df': { symbol: 'frxUSD',  decimals: 18 },
-  '0x5bff88ca1442c2496f7e475e9e7786383bc070c0': { symbol: 'sfrxUSD', decimals: 18 },
-  '0x43edd7f3831b08fe70b7555ddd373c8bf65a9050': { symbol: 'frxETH',  decimals: 18 },
-  '0x3ec3849c33291a9ef4c5db86de593eb4a37fde45': { symbol: 'sfrxETH', decimals: 18 },
-  '0xac73671a1762fe835208fb93b7ae7490d1c2ccb3': { symbol: 'CRV',     decimals: 18 },
-  '0x64445f0aecc51e94ad52d8ac56b7190e764e561a': { symbol: 'FXS',     decimals: 18 },
+// Build TOKEN_MAP from KNOWN_TOKENS for symbol resolution in RPC fallback
+const TOKEN_MAP: Record<string, { symbol: string; decimals: number }> = {}
+for (const token of KNOWN_TOKENS) {
+  TOKEN_MAP[token.contract.toLowerCase()] = {
+    symbol: token.symbol,
+    decimals: token.decimals,
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -27,6 +22,7 @@ async function rpc(method: string, params: any[], id = 1) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', method, params, id }),
     cache: 'no-store',
+    signal: AbortSignal.timeout(10_000),
   })
   const d = await r.json()
   return d.result
@@ -173,8 +169,14 @@ export async function GET(req: NextRequest) {
       isError: false, isToken: false, functionName: t.input === '0x' ? '' : 'contract call',
     }))
 
+    // Deduplicate by hash using Set (O(n) instead of O(n²) with findIndex)
+    const seenHashes = new Set<string>()
     const all = [...nativeTxs, ...erc20Txs]
-      .filter((t, i, arr) => arr.findIndex(x => x.hash === t.hash) === i)
+      .filter((t) => {
+        if (seenHashes.has(t.hash)) return false
+        seenHashes.add(t.hash)
+        return true
+      })
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 100)
 

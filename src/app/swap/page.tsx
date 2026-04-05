@@ -9,7 +9,7 @@ import {
 import { useWallet } from '@/contexts/WalletContext'
 import { useSendTransaction, useWaitForTransactionReceipt, useChainId, useSwitchChain } from 'wagmi'
 import { encodeFunctionData } from 'viem'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 
 // ─── LI.FI INTEGRATOR CONFIG ────────────────────────────────────────────────
 const INTEGRATOR     = process.env.NEXT_PUBLIC_LIFI_INTEGRATOR ?? 'inkboard'
@@ -345,7 +345,7 @@ function SlippageModal({ value, onChange, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h3 className="font-semibold text-gray-800" style={SORA}>Slippage Tolerance</h3>
+          <h3 className="font-semibold text-gray-800" style={JAKARTA}>Slippage Tolerance</h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"><X size={18} /></button>
         </div>
         <div className="px-5 pb-5 space-y-3">
@@ -406,7 +406,7 @@ function ChainModal({ chains, onSelect, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <h3 className="font-semibold text-gray-800" style={SORA}>Select Network</h3>
+          <h3 className="font-semibold text-gray-800" style={JAKARTA}>Select Network</h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"><X size={18} /></button>
         </div>
         <div className="px-4 pb-3">
@@ -462,7 +462,7 @@ function TokenModal({ chain, onSelect, onClose }: {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <div>
-            <h3 className="font-semibold text-gray-800" style={SORA}>Select Token</h3>
+            <h3 className="font-semibold text-gray-800" style={JAKARTA}>Select Token</h3>
             <p className="text-xs text-gray-400">{chain.name}</p>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"><X size={18} /></button>
@@ -928,7 +928,7 @@ export default function SwapPage() {
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center shadow-lg shadow-violet-200">
             <ArrowLeftRight size={17} className="text-white" />
           </div>
-          <h1 className="font-bold text-2xl text-gray-900" style={SORA}>Cross-chain Swap</h1>
+          <h1 className="font-bold text-2xl text-gray-900" style={JAKARTA}>Cross-chain Swap</h1>
         </div>
         <p className="text-sm text-gray-500 ml-12">
           Cross-chain swaps across {chains.length > 0 ? `${chains.length}+` : '40+'} chains · Best rate via LI.FI aggregation

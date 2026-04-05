@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { RefreshCw, ExternalLink, TrendingUp, Zap, Layers, BookOpen, Coins } from 'lucide-react'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 import AdBanner from '@/components/AdBanner'
 
 // Duplicated from api/best-aprs/route.ts to avoid importing server-only module
@@ -30,7 +30,7 @@ function AprBadge({ apr }: { apr: number }) {
                 'bg-gray-100   text-gray-600   border-gray-200'
 
   return (
-    <span className={`text-sm font-bold px-3 py-1 rounded-full border ${color}`} style={SORA}>
+    <span className={`text-sm font-bold px-3 py-1 rounded-full border ${color}`} style={JAKARTA}>
       {apr.toFixed(2)}% APR
     </span>
   )
@@ -70,7 +70,7 @@ function AprCard({ entry, rank, showType = false }: { entry: AprEntry; rank: num
     <div className="card p-4 flex items-center gap-4 hover:shadow-md transition-all duration-200">
       {/* Rank */}
       <div className="w-7 h-7 rounded-full bg-violet-50 border border-violet-100 flex items-center justify-center shrink-0">
-        <span className="text-xs font-bold text-violet-500" style={SORA}>{rank}</span>
+        <span className="text-xs font-bold text-violet-500" style={JAKARTA}>{rank}</span>
       </div>
 
       {/* Logo + Info */}
@@ -85,7 +85,7 @@ function AprCard({ entry, rank, showType = false }: { entry: AprEntry; rank: num
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{entry.protocol}</span>
           {showType && <TypeBadge type={entry.type} />}
         </div>
-        <p className="text-sm font-semibold text-gray-800 truncate mb-1.5" style={SORA}>{entry.label}</p>
+        <p className="text-sm font-semibold text-gray-800 truncate mb-1.5" style={JAKARTA}>{entry.label}</p>
         <div className="flex items-center gap-2">
           <TokenPills tokens={entry.tokens} />
           {entry.tvl > 0 && (
@@ -147,7 +147,7 @@ function SectionHeader({ icon, title, count, accent }: {
         {icon}
       </div>
       <div>
-        <h2 className="text-base font-bold text-gray-800" style={SORA}>{title}</h2>
+        <h2 className="text-base font-bold text-gray-800" style={JAKARTA}>{title}</h2>
         <p className="text-xs text-gray-400">{count} positions</p>
       </div>
     </div>
@@ -253,7 +253,7 @@ export default function BestAprsPage() {
       {/* ── Page Header ── */}
       <div className="flex items-start justify-between mb-8 gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-1" style={SORA}>
+          <h1 className="text-3xl font-bold text-gray-900 mb-1" style={JAKARTA}>
             Best APRs
           </h1>
           <p className="text-gray-400 text-sm">
@@ -291,7 +291,7 @@ export default function BestAprsPage() {
               <div className="text-xl mb-1">{stat.icon}</div>
               <div className="text-xs text-gray-400 font-medium">{stat.label}</div>
               {stat.best ? (
-                <div className="text-sm font-bold text-emerald-600 mt-1" style={SORA}>
+                <div className="text-sm font-bold text-emerald-600 mt-1" style={JAKARTA}>
                   Best: {stat.best.toFixed(2)}%
                 </div>
               ) : (

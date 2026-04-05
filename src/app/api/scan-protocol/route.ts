@@ -43,7 +43,8 @@ const BLOCKED_HOSTNAMES = ['localhost', 'metadata.google.internal', 'metadata.go
 function isSafeUrl(url: string): boolean {
   try {
     const u = new URL(url)
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false
+    // Only allow HTTPS for production security
+    if (u.protocol !== 'https:') return false
     if (PRIVATE_IP_RE.test(u.hostname)) return false
     if (BLOCKED_HOSTNAMES.some(h => u.hostname === h || u.hostname.endsWith('.' + h))) return false
     if (u.hostname.endsWith('.local') || u.hostname.endsWith('.internal')) return false

@@ -20,7 +20,7 @@
  *   fmtUSD(12_847)    → '$12.85K'
  *   fmtUSD(3.14)      → '$3.14'
  *   fmtUSD(0.0005)    → '$0.0005'
- *   fmtUSD(-500)      → '-$500.00K'  (≥1K)
+ *   fmtUSD(-500)      → '-$500.00'  (< 1K)
  *   fmtUSD(0)         → '$0.00'
  */
 export function fmtUSD(v: number): string {

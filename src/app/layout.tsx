@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import Navbar from '@/components/Navbar'
-import BottomBar from '@/components/BottomBar'
+import AppShell from '@/components/AppShell'
 import Providers from '@/components/Providers'
 
 export const metadata: Metadata = {
@@ -37,11 +36,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen" style={{ background: 'var(--ink-bg)' }}>
         <Providers>
-          <Navbar />
-          <main className="page-content pt-16">
+          <AppShell>
             {children}
-          </main>
-          <BottomBar />
+          </AppShell>
         </Providers>
       </body>
     </html>

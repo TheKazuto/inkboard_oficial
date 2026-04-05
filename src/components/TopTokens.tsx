@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { SORA } from '@/lib/styles'
+import Image from 'next/image'
+import { JAKARTA } from '@/lib/styles'
 import { fmtUSD } from '@/lib/format'
 import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
 
@@ -77,7 +78,7 @@ export default function TopTokens() {
         <div>
           <h3
             className="font-semibold text-gray-800"
-            style={SORA}
+            style={JAKARTA}
           >
             Top Ink Tokens
           </h3>
@@ -157,7 +158,7 @@ export default function TopTokens() {
                     {/* Token name + logo */}
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
-                        <img
+                        <Image
                           src={token.image}
                           alt={token.name}
                           width={28}

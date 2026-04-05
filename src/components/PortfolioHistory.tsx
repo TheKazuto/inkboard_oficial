@@ -1,6 +1,6 @@
 'use client'
 import { cachedFetch, getCached } from '@/lib/dataCache'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 import { fmtYAxis } from '@/lib/format'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -8,7 +8,7 @@ import { useWallet }      from '@/contexts/WalletContext'
 import { usePreferences } from '@/contexts/PreferencesContext'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer, type TooltipProps,
 } from 'recharts'
 import { TrendingUp, TrendingDown, RefreshCw, Wallet } from 'lucide-react'
 
@@ -40,7 +40,7 @@ function tickInterval(length: number, range: Range) {
 }
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
   const { fmtValue } = usePreferences()
   if (!active || !payload?.length) return null
   return (
@@ -100,7 +100,7 @@ export default function PortfolioHistory() {
   })
   const [error, setError] = useState(false)
 
-  async function fetchRange(r: Range, force = false) {
+  const fetchRange = useCallback(async (r: Range, force = false) => {
     if (!stableAddress) return
     const days = RANGES.find(x => x.key === r)!.days
     // Use cached if available and not forced
@@ -120,31 +120,29 @@ export default function PortfolioHistory() {
     } finally {
       setLoading(prev => ({ ...prev, [r]: false }))
     }
-  }
+  }, [stableAddress])
 
-  // Fetch default range when wallet connects
+  // Fetch active range when wallet connects
   useEffect(() => {
     if (stableAddress) {
-      fetchRange("30d")
+      fetchRange(range)
     } else {
       setData({ '7d': null, '30d': null, '90d': null, '1y': null })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stableAddress])
+  }, [stableAddress, fetchRange])
 
   // Fetch on range change (lazy — only if not already fetched)
   useEffect(() => {
     if (isConnected && address && !data[range] && !loading[range]) {
       fetchRange(range)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range])
+  }, [range, isConnected, address, data, loading, fetchRange])
 
   // ── Not connected ──────────────────────────────────────────────────────────
   if (!isConnected) {
     return (
       <div className="card p-5">
-        <h3 className="font-semibold text-gray-800" style={SORA}>
+        <h3 className="font-semibold text-gray-800" style={JAKARTA}>
           Token Portfolio History
         </h3>
         <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
@@ -165,7 +163,7 @@ export default function PortfolioHistory() {
     return (
       <div className="card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-800" style={SORA}>Token Portfolio History</h3>
+          <h3 className="font-semibold text-gray-800" style={JAKARTA}>Token Portfolio History</h3>
           <div className="flex items-center gap-2">
             <button
               onClick={() => fetchRange(range, true)}
@@ -200,7 +198,7 @@ export default function PortfolioHistory() {
     return (
       <div className="card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-800" style={SORA}>Token Portfolio History</h3>
+          <h3 className="font-semibold text-gray-800" style={JAKARTA}>Token Portfolio History</h3>
           <RangeSelector range={range} setRange={setRange} />
         </div>
         <div className="flex flex-col items-center justify-center h-48 gap-2 text-center">
@@ -215,7 +213,7 @@ export default function PortfolioHistory() {
     <div className="card p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="font-semibold text-gray-800" style={SORA}>
+          <h3 className="font-semibold text-gray-800" style={JAKARTA}>
             Token Portfolio History
           </h3>
           {current && (

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import PortfolioHistory from '@/components/PortfolioHistory'
 import AdBanner from '@/components/AdBanner'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 import { usePreferences } from '@/contexts/PreferencesContext'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ function fmtBal(b: number) {
   return b.toFixed(6)
 }
 
-// Fix #13 (MÉDIO): Sanitize NFT/token image URLs before rendering in <img> tags.
+// Sanitize NFT/token image URLs before rendering in <img> tags.
 // NFT metadata comes from arbitrary on-chain URIs. Without this check, a malicious
 // NFT could inject javascript: or data:text/html: URIs as image sources.
 // The server-side nfts route already sanitizes, but this adds defense-in-depth.
@@ -206,7 +206,7 @@ export default function PortfolioPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-bold text-2xl text-gray-900" style={SORA}>Portfolio</h1>
+          <h1 className="font-bold text-2xl text-gray-900" style={JAKARTA}>Portfolio</h1>
           <p className="text-gray-500 text-sm mt-1">All tokens and NFTs in your wallet</p>
         </div>
         {isConnected && lastUpdated && (
@@ -247,7 +247,7 @@ export default function PortfolioPage() {
               {isLoading && totalValue === 0
                 ? <Skeleton className="h-8 w-40" />
                 : (
-                  <p className="font-bold text-3xl text-gray-900" style={SORA}>
+                  <p className="font-bold text-3xl text-gray-900" style={JAKARTA}>
                     {fmtValue(totalValue)}
                   </p>
                 )
@@ -283,7 +283,7 @@ export default function PortfolioPage() {
               </div>
               {isLoading && tokenValue === 0
                 ? <Skeleton className="h-7 w-24 mt-1" />
-                : <p className="font-bold text-xl text-gray-800" style={SORA}>{fmtValue(tokenValue)}</p>
+                : <p className="font-bold text-xl text-gray-800" style={JAKARTA}>{fmtValue(tokenValue)}</p>
               }
               {tokens.length > 0 && (
                 <p className="text-xs text-gray-400 mt-1">{tokens.length} token{tokens.length !== 1 ? 's' : ''}</p>
@@ -300,7 +300,7 @@ export default function PortfolioPage() {
               </div>
               {isLoading && nftValue === 0
                 ? <Skeleton className="h-7 w-24 mt-1" />
-                : <p className="font-bold text-xl text-gray-800" style={SORA}>{fmtValue(nftValue)}</p>
+                : <p className="font-bold text-xl text-gray-800" style={JAKARTA}>{fmtValue(nftValue)}</p>
               }
               {nftTotal > 0 && (
                 <p className="text-xs text-gray-400 mt-1">{nftTotal} NFT{nftTotal !== 1 ? 's' : ''} · floor price</p>
@@ -315,14 +315,18 @@ export default function PortfolioPage() {
           <PortfolioHistory />
 
           {/* ── Google Ad slot ────────────────────────────────────────────── */}
-          <AdBanner className="min-h-[120px]" />
+          <AdBanner
+            className="min-h-[120px]"
+            imageSrc="/banner-portfolio.png"
+            href="https://app.lighter.xyz/?referral=SHINKALABS"
+          />
 
           {/* ── Tokens table ─────────────────────────────────────────────── */}
           <div className="card overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <div className="flex items-center gap-2">
                 <Coins size={16} className="text-violet-600" />
-                <h2 className="font-semibold text-gray-800" style={SORA}>Tokens</h2>
+                <h2 className="font-semibold text-gray-800" style={JAKARTA}>Tokens</h2>
                 {tokens.length > 0 && (
                   <span className="text-xs bg-violet-100 text-violet-600 font-semibold px-2 py-0.5 rounded-full">{tokens.length}</span>
                 )}
@@ -365,7 +369,7 @@ export default function PortfolioPage() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <div className="flex items-center gap-2">
                 <ImageIcon size={16} className="text-blue-500" />
-                <h2 className="font-semibold text-gray-800" style={SORA}>NFTs</h2>
+                <h2 className="font-semibold text-gray-800" style={JAKARTA}>NFTs</h2>
                 {nftTotal > 0 && (
                   <span className="text-xs bg-blue-50 text-blue-500 font-semibold px-2 py-0.5 rounded-full">{nftTotal}</span>
                 )}

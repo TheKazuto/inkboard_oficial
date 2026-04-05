@@ -143,6 +143,27 @@ export const KNOWN_TOKENS: KnownToken[] = [
   },
 ]
 
+// ─── Shared DeFi constants ───────────────────────────────────────────────────
+
+/** Stablecoin symbols used for APR/pool classification across protocols. */
+export const STABLECOINS = new Set([
+  'USDC', 'USDC.E', 'USDT', 'USDT0', 'DAI', 'FRAX', 'FRXUSD', 'SFRXUSD',
+  'CRVUSD', 'BUSD', 'TUSD', 'LUSD', 'MIM', 'USD1', 'LVUSD', 'USDE', 'SUSDE',
+  'DOLA', 'GUSD', 'SUSD', 'USDP', 'PYUSD', 'FDUSD', 'USDG', 'OUSDT',
+  'OUSD', 'OUSDM',
+])
+
+/** Returns true if `sym` is a stablecoin (case-insensitive). */
+export function isStablecoin(sym: string): boolean {
+  return STABLECOINS.has(sym.toUpperCase().replace('₮', 'T'))
+}
+
+/** Local path to the Nado protocol logo. */
+export const NADO_LOGO = '/nado-logo.jpg'
+
+/** Tydro DataProvider contract address (Aave V3 fork on Ink). */
+export const TYDRO_DATA_PROVIDER = '0x96086C25d13943C80Ff9a19791a40Df6aFC08328' as const
+
 // ─── ETH price (delegates to centralized priceService) ────────────────────────
 
 export interface EthPriceData {

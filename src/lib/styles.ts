@@ -8,6 +8,3 @@
 
 /** Stable reference — no new object created per render. */
 export const JAKARTA = { fontFamily: 'Plus Jakarta Sans, sans-serif' } as const
-
-/** Backward compat alias — pages that imported SORA still work */
-export const SORA = JAKARTA

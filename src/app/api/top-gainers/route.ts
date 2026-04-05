@@ -64,7 +64,7 @@ export async function GET() {
       })
     }
 
-    const skipSymbols = new Set(['WETH', 'wETH'])
+    const skipSymbols = new Set(['WETH'])
     const seen = new Map<string, Gainer>()
 
     for (const pool of allPools) {

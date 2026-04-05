@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { useEthPrice } from '@/hooks/useEthPrice'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 
 const SocialLinks = [
   {
@@ -71,7 +71,7 @@ export default function BottomBar() {
             </svg>
           </div>
 
-          <span className="font-display text-sm font-semibold text-gray-800" style={SORA}>
+          <span className="font-display text-sm font-semibold text-gray-800" style={JAKARTA}>
             ETH
           </span>
 

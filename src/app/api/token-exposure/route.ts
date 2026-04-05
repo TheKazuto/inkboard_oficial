@@ -27,8 +27,12 @@ export async function GET(req: NextRequest) {
     // Batch native balance + all ERC-20 balanceOf in a single RPC request
     const allCalls = [nativeCall, ...erc20Calls]
     const allResults = await rpcBatch(allCalls)
-    const nativeRes       = allResults[0]
-    const erc20Responses  = allResults.slice(1)
+
+    // Match responses by id instead of relying on array order
+    const nativeRes = allResults.find((r: any) => r.id === 'native')
+    const erc20Responses = KNOWN_TOKENS.map((_, i) =>
+      allResults.find((r: any) => r.id === i)
+    )
 
     // ── 2. Parse raw balances ──────────────────────────────────────────────────
     const rawETH = nativeRes?.result
@@ -85,20 +89,22 @@ export async function GET(req: NextRequest) {
       } catch { /* use whatever we have */ }
     }
 
-    // Fallback prices if priceService returned nothing
-    if (!prices['ethereum']) {
+    // Fallback: only stablecoins have reliable hardcoded prices (always $1).
+    // Volatile assets (ETH, WBTC, WETH) are NOT hardcoded — stale prices would
+    // show incorrect portfolio values. If priceService fails for volatile tokens,
+    // their value is shown as $0 rather than a misleading stale figure.
+    if (Object.keys(prices).length === 0) {
       prices = {
-        ethereum: 2000,
-        'usd-coin': 1.0,
-        weth: 2300,
-        tether: 1.0,
-        'wrapped-bitcoin': 85000,
+        'usd-coin':    1.0,
+        tether:        1.0,
         'agora-dollar': 1.0,
+        crvusd:        1.0,
+        frax:          1.0,
       }
     }
 
     // ── 4. Calculate USD values ────────────────────────────────────────────────
-    const ethPrice = prices['ethereum'] ?? 2000
+    const ethPrice = prices['ethereum'] ?? 0
     const ethValue = rawETH * ethPrice
 
     const tokens: {

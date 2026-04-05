@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { INK_RPC, rpcBatch } from '@/lib/ink'
+import { INK_RPC, rpcBatch, KNOWN_TOKENS, STABLECOINS, NADO_LOGO, TYDRO_DATA_PROVIDER } from '@/lib/ink'
 import { getAllPrices } from '@/lib/priceService'
 
 export const revalidate = 0
@@ -16,37 +16,28 @@ function balanceOfData(addr: string): string {
   return '0x70a08231' + addr.slice(2).toLowerCase().padStart(64, '0')
 }
 
-// ─── Token metadata (address → symbol/decimals) ─────────────────────────────
-const TOKEN_INFO: Record<string, { symbol: string; decimals: number }> = {
-  '0x4200000000000000000000000000000000000006': { symbol: 'WETH',    decimals: 18 },
-  '0xf1815bd50389c46847f0bda824ec8da914045d14': { symbol: 'USDC.e',  decimals: 6  },
-  '0x0200c29006150606b650577bbe7b6248f58470c1': { symbol: 'USDT0',   decimals: 6  },
-  '0x39fec550cc6ddced810eccfa9b2931b4b5f2344d': { symbol: 'crvUSD',  decimals: 18 },
-  '0x80eede496655fb9047dd39d9f418d5483ed600df': { symbol: 'frxUSD',  decimals: 18 },
-  '0x43edd7f3831b08fe70b7555ddd373c8bf65a9050': { symbol: 'frxETH',  decimals: 18 },
-  '0x3ec3849c33291a9ef4c5db86de593eb4a37fde45': { symbol: 'sfrxETH', decimals: 18 },
-  '0xac73671a1762fe835208fb93b7ae7490d1c2ccb3': { symbol: 'CRV',     decimals: 18 },
-  '0x64445f0aecc51e94ad52d8ac56b7190e764e561a': { symbol: 'FXS',     decimals: 18 },
+// ─── Stablecoin classification (STABLECOINS set imported from @/lib/ink) ────
+function isStable(sym: string): boolean {
+  return STABLECOINS.has(sym.toUpperCase().replace('₮', 'T'))
 }
 
-// CoinGecko price mapping
-const COINGECKO_IDS: Record<string, string> = {
-  WETH: 'ethereum', ETH: 'ethereum',
-  sfrxETH: 'staked-frax-ether', frxETH: 'frax-ether',
-  CRV: 'curve-dao-token', FXS: 'frax-share',
-  WBTC: 'wrapped-bitcoin', kBTC: 'wrapped-bitcoin',
-  'USDC.e': 'usd-coin', USDC: 'usd-coin',
-  USDT0: 'tether', crvUSD: 'crvusd',
-  INK: 'ink', GHO: 'gho',
+// Build TOKEN_INFO from KNOWN_TOKENS (address-indexed map)
+const TOKEN_INFO: Record<string, { symbol: string; decimals: number }> = {}
+for (const token of KNOWN_TOKENS) {
+  TOKEN_INFO[token.contract.toLowerCase()] = {
+    symbol: token.symbol,
+    decimals: token.decimals,
+  }
 }
-const STABLES = new Set([
-  'USDC', 'USDC.e', 'USDT0', 'USDT', 'crvUSD', 'DAI', 'USDG', 'GHO',
-  'frxUSD', 'sfrxUSD', 'BUSD', 'TUSD', 'LUSD',
-])
+
+// Derive COINGECKO_IDS from KNOWN_TOKENS
+const COINGECKO_IDS = Object.fromEntries(
+  KNOWN_TOKENS.filter(t => t.coingeckoId).map(t => [t.symbol, t.coingeckoId])
+)
 
 async function getTokenPricesUSD(symbols: string[]): Promise<Record<string, number>> {
   const prices: Record<string, number> = {}
-  for (const s of symbols) if (STABLES.has(s)) prices[s] = 1
+  for (const s of symbols) if (isStable(s)) prices[s] = 1
   const toFetch = symbols.filter(s => prices[s] === undefined)
   if (!toFetch.length) return prices
   try {
@@ -64,7 +55,7 @@ async function getTokenPricesUSD(symbols: string[]): Promise<Record<string, numb
 // TYDRO — Aave V3 fork on Ink
 // ═══════════════════════════════════════════════════════════════════════════════
 const TYDRO_POOL_PROVIDER = '0x4172E6aAEC070ACB31aaCE343A58c93E4C70f44D'
-const TYDRO_DATA_PROVIDER = '0x96086C25d13943C80Ff9a19791a40Df6aFC08328'
+// TYDRO_DATA_PROVIDER imported from @/lib/ink
 
 async function fetchTydro(user: string): Promise<any[]> {
   try {
@@ -92,6 +83,9 @@ async function fetchTydro(user: string): Promise<any[]> {
 
     // Step 3: Batch — getUserAccountData + getUserReserveData for each reserve
     //   + symbol()/decimals() for tokens not in TOKEN_INFO
+    // localTokenInfo is a request-scoped copy — on-chain data is written here,
+    // never to the module-level TOKEN_INFO constant.
+    const localTokenInfo: Record<string, { symbol: string; decimals: number }> = { ...TOKEN_INFO }
     const userPadded = user.slice(2).toLowerCase().padStart(64, '0')
     const calls: any[] = [
       // Pool.getUserAccountData(user) → id=100
@@ -103,14 +97,14 @@ async function fetchTydro(user: string): Promise<any[]> {
       calls.push(ethCall(TYDRO_DATA_PROVIDER, '0x28dd2d01' + assetPad + userPadded, 200 + i))
     }
     // For unknown tokens, fetch symbol() and decimals()
-    const unknowns = reserves.filter(r => !TOKEN_INFO[r])
+    const unknowns = reserves.filter(r => !localTokenInfo[r])
     for (let i = 0; i < unknowns.length; i++) {
       calls.push(ethCall(unknowns[i], '0x95d89b41', 300 + i * 2))   // symbol()
       calls.push(ethCall(unknowns[i], '0x313ce567', 301 + i * 2))   // decimals()
     }
     const allRes = await rpcBatch(calls, 12_000)
 
-    // Resolve unknown tokens
+    // Resolve unknown tokens into a local map (never mutate the global TOKEN_INFO)
     for (let i = 0; i < unknowns.length; i++) {
       const symR = allRes.find((r: any) => r.id === 300 + i * 2)
       const decR = allRes.find((r: any) => r.id === 301 + i * 2)
@@ -119,9 +113,14 @@ async function fetchTydro(user: string): Promise<any[]> {
           const sh  = symR.result.slice(2)
           const off = Number(BigInt('0x' + sh.slice(0, 64))) * 2
           const len = Number(BigInt('0x' + sh.slice(off, off + 64)))
-          const sym = Buffer.from(sh.slice(off + 64, off + 64 + len * 2), 'hex').toString('utf8').replace(/\0/g, '')
+          const sym = Buffer.from(sh.slice(off + 64, off + 64 + len * 2), 'hex')
+            .toString('utf8')
+            .replace(/\0/g, '')
+            .replace(/[<>&"'`]/g, '')  // strip HTML/injection chars from on-chain data
+            .trim()
+            .slice(0, 20)             // token symbols are never this long
           const dec = Number(decodeUint(decR.result))
-          if (sym && dec >= 0 && dec <= 18) TOKEN_INFO[unknowns[i]] = { symbol: sym, decimals: dec }
+          if (sym && dec >= 0 && dec <= 18) localTokenInfo[unknowns[i]] = { symbol: sym, decimals: dec }
         } catch { /* skip */ }
       }
     }
@@ -158,7 +157,7 @@ async function fetchTydro(user: string): Promise<any[]> {
       const varDebt     = BigInt('0x' + d.slice(128, 192))
       const liqRate     = BigInt('0x' + d.slice(384, 448))
 
-      const info = TOKEN_INFO[reserves[i]] ?? { symbol: reserves[i].slice(0, 8), decimals: 18 }
+      const info = localTokenInfo[reserves[i]] ?? { symbol: reserves[i].slice(0, 8), decimals: 18 }
       const dec  = Math.pow(10, info.decimals)
 
       const supAmt  = Number(aTokenBal)  / dec
@@ -500,7 +499,7 @@ async function fetchCurve(user: string): Promise<any[]> {
 // NADO — NLP Vault position (via Nado gateway subaccount_info API)
 // NLP tokens live inside Nado's subaccount system, NOT as ERC-20 in wallet.
 // ═══════════════════════════════════════════════════════════════════════════════
-const NADO_LOGO    = '/nado-logo.jpg'
+// NADO_LOGO imported from @/lib/ink
 const NADO_GATEWAY = 'https://gateway.prod.nado.xyz/v1'
 
 async function fetchNado(user: string): Promise<any[]> {

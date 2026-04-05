@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 
 interface Gainer {
@@ -74,7 +74,7 @@ export default function TopEarners() {
     <div className="card p-5">
       {/* Header */}
       <div className="mb-4">
-        <h3 className="font-semibold text-gray-800" style={SORA}>
+        <h3 className="font-semibold text-gray-800" style={JAKARTA}>
           Top Earners in the Ecosystem
         </h3>
         <p className="text-xs text-gray-400">24 hours</p>

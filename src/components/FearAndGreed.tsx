@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { RefreshCw, ChevronRight } from 'lucide-react'
-import { SORA } from '@/lib/styles'
+import { JAKARTA } from '@/lib/styles'
 
 interface FGEntry {
   value: number
@@ -40,15 +40,15 @@ function getMiniLabel(v: number): string {
 function GaugeArc({ value }: { value: number }) {
   const color = getColor(value)
 
-  // Semi-círculo: de 180° a 0° (esquerda para direita)
-  // Usamos um path de arco em SVG
+  // Semi-circle: 180° to 0° (left to right)
+  // SVG arc path
   const R = 70
   const cx = 90
   const cy = 85
   const totalAngle = Math.PI // 180°
   const angle = (value / 100) * totalAngle
 
-  // Ponto de início (esquerda) e ponto atual
+  // Start point (left) and current point
   const startX = cx - R
   const startY = cy
   const endX = cx + Math.cos(Math.PI - angle) * R
@@ -156,7 +156,7 @@ export default function FearAndGreed() {
     <div className="card p-5">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-800" style={SORA}>
+        <h3 className="font-semibold text-gray-800" style={JAKARTA}>
           Fear & Greed
         </h3>
         <div className="flex items-center gap-2">
@@ -232,7 +232,7 @@ export default function FearAndGreed() {
                 style={{ background: `${getColor(entry.value)}11`, border: `1px solid ${getColor(entry.value)}33` }}
               >
                 <p className="text-xs text-gray-400 mb-1">{label}</p>
-                <p className="font-bold text-gray-800 text-lg" style={SORA}>
+                <p className="font-bold text-gray-800 text-lg" style={JAKARTA}>
                   {entry.value}
                 </p>
                 <p className="text-xs font-medium" style={{ color: getColor(entry.value) }}>

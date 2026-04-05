@@ -7,6 +7,16 @@
 
 import { kvGet, kvSet } from '@/lib/kvCache'
 
+// ─── CoinGecko API helpers ────────────────────────────────────────────────────
+
+export function getCoinGeckoHeaders(): HeadersInit {
+  const headers: HeadersInit = { 'Accept': 'application/json' }
+  if (process.env.COINGECKO_API_KEY) {
+    headers['x-cg-demo-api-key'] = process.env.COINGECKO_API_KEY
+  }
+  return headers
+}
+
 // ─── All CoinGecko IDs used across the project ────────────────────────────────
 const ALL_PRICE_IDS = [
   'ethereum',
@@ -42,15 +52,11 @@ let inflight: Promise<PriceMap> | null = null
 
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 async function fetchFromCoinGecko(): Promise<PriceMap> {
-  const apiKey  = process.env.COINGECKO_API_KEY
-  const headers: Record<string, string> = { 'Accept': 'application/json' }
-  if (apiKey) headers['x-cg-demo-api-key'] = apiKey
-
   const ids = ALL_PRICE_IDS.join(',')
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`
 
   const res = await fetch(url, {
-    headers,
+    headers: getCoinGeckoHeaders(),
     signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`)
@@ -111,4 +117,34 @@ export async function getEthPriceFromService(): Promise<{
   const change24h = eth?.usd_24h_change ?? 0
   const prevPrice = price / (1 + change24h / 100)
   return { price, change24h, changeAmount: price - prevPrice }
+}
+
+/** Fetch historical price data from CoinGecko for a coin over N days. */
+export async function fetchPriceHistory(coinId: string, days: number): Promise<[number, number][]> {
+  const cacheKey = `ph:${coinId}:${days}`
+  const softTtlMs = 60 * 60 * 1000  // 1 hour
+  const hardTtlSec = 2 * 60 * 60    // 2 hours
+
+  // Fast path — serve from KV if fresh
+  const cached = await kvGet<[number, number][]>(cacheKey, softTtlMs)
+  if (cached.data && cached.fresh) return cached.data
+
+  try {
+    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=daily`
+    const res = await fetch(url, { headers: getCoinGeckoHeaders(), signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) throw new Error(`CoinGecko ${res.status}`)
+
+    const data = await res.json()
+    const prices: [number, number][] = data?.prices ?? []
+
+    if (prices.length > 0) {
+      await kvSet(cacheKey, prices, hardTtlSec)
+    }
+
+    return prices
+  } catch (e) {
+    console.error(`[priceService] fetchPriceHistory(${coinId}, ${days}) failed:`, e)
+    // Return stale data if available rather than empty
+    return cached.data ?? []
+  }
 }

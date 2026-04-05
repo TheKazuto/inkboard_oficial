@@ -15,9 +15,32 @@ import { cachedFetch } from '@/lib/dataCache'
 
 import {
   createContext, useContext, useState,
-  useEffect, useCallback, useRef, ReactNode,
+  useEffect, useCallback, useRef, useReducer, ReactNode,
 } from 'react'
 import { useWallet } from './WalletContext'
+
+// ─── DeFi position type (shared with defi page and portfolio context) ────────
+export interface DefiSupplyEntry  { symbol: string; amount: number; amountUSD: number; apy: number }
+export interface DefiBorrowEntry  { symbol: string; amount: number; amountUSD: number; apr?: number }
+export interface DefiPosition {
+  protocol:            string
+  type:                'lending' | 'pool' | 'vault'
+  logo:                string
+  url:                 string
+  chain:               string
+  label:               string
+  tokens?:             string[]
+  amountUSD?:          number
+  netValueUSD:         number
+  apy?:                number
+  inRange?:            boolean | null
+  // Lending-specific (e.g. Tydro)
+  supply?:             DefiSupplyEntry[]
+  borrow?:             DefiBorrowEntry[]
+  totalCollateralUSD?: number
+  totalDebtUSD?:       number
+  healthFactor?:       number | null
+}
 
 // ─── Raw data types (shared with portfolio page) ─────────────────────────────
 export interface TokenData {
@@ -40,7 +63,7 @@ export interface PortfolioTotals {
   defiActiveProtocols: string[]
   defiTotalDebtUSD:    number
   defiTotalSupplyUSD:  number
-  defiPositions:       any[]        // raw positions array — consumed by DeFiPositions widget
+  defiPositions:       DefiPosition[]  // raw positions array — consumed by DeFiPositions widget
   tokens:              TokenData[]  // full token list — consumed by portfolio page
   nfts:                NFTData[]    // full NFT list   — consumed by portfolio page
   nftTotal:            number       // total NFT count (may exceed nfts.length if >50)
@@ -73,6 +96,48 @@ const ZERO: PortfolioTotals = {
 
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
+// ─── Reducer — replaces multiple useRef accumulators ─────────────────────────
+type AccAction =
+  | { type: 'RESET' }
+  | { type: 'SEED'; totals: PortfolioTotals }
+  | { type: 'SET_TOKENS'; value: number; tokens: TokenData[] }
+  | { type: 'SET_NFTS'; value: number; nfts: NFTData[]; total: number; noKey: boolean }
+  | { type: 'SET_NFTS_NO_KEY' }
+  | { type: 'SET_DEFI'; netValue: number; debtUSD: number; supplyUSD: number; protocols: string[]; positions: DefiPosition[] }
+
+function portfolioReducer(state: PortfolioTotals, action: AccAction): PortfolioTotals {
+  switch (action.type) {
+    case 'RESET':
+      return { ...ZERO }
+    case 'SEED':
+      return { ...action.totals }
+    case 'SET_TOKENS': {
+      const tokenValueUSD = action.value
+      return { ...state, tokenValueUSD, totalValueUSD: tokenValueUSD + state.nftValueUSD + state.defiNetValueUSD, tokens: action.tokens }
+    }
+    case 'SET_NFTS': {
+      const nftValueUSD = action.value
+      return { ...state, nftValueUSD, totalValueUSD: state.tokenValueUSD + nftValueUSD + state.defiNetValueUSD, nfts: action.nfts, nftTotal: action.total, nftsNoKey: action.noKey }
+    }
+    case 'SET_NFTS_NO_KEY':
+      return { ...state, nftsNoKey: true }
+    case 'SET_DEFI': {
+      const defiNetValueUSD = action.netValue
+      return {
+        ...state,
+        defiNetValueUSD,
+        totalValueUSD:       state.tokenValueUSD + state.nftValueUSD + defiNetValueUSD,
+        defiTotalDebtUSD:    action.debtUSD,
+        defiTotalSupplyUSD:  action.supplyUSD,
+        defiActiveProtocols: action.protocols,
+        defiPositions:       action.positions,
+      }
+    }
+    default:
+      return state
+  }
+}
+
 interface CacheEntry {
   totals:    PortfolioTotals
   fetchedAt: number
@@ -95,42 +160,18 @@ export function usePortfolio() {
 export function PortfolioProvider({ children }: { children: ReactNode }) {
   const { stableAddress: address, isConnected } = useWallet()
 
-  const [totals,      setTotals]      = useState<PortfolioTotals>(ZERO)
-  const [status,      setStatus]      = useState<LoadStatus>('idle')
+  const [totals,      dispatch]      = useReducer(portfolioReducer, ZERO)
+  const [status,      setStatus]     = useState<LoadStatus>('idle')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
-  // Refs for parallel fetch accumulation
-  const tokenRef      = useRef(0)
-  const nftRef        = useRef(0)
-  const defiRef       = useRef<Partial<PortfolioTotals> & { defiPositions?: any[] }>({})
-  const tokenListRef  = useRef<TokenData[]>([])
-  const nftListRef    = useRef<NFTData[]>([])
-  const nftTotalRef   = useRef(0)
-  const nftsNoKeyRef  = useRef(false)
-  const loadingAddr   = useRef<string | null>(null)
+  const loadingAddr = useRef<string | null>(null)
 
-  const flush = useCallback((addr: string) => {
-    const t = tokenRef.current
-    const n = nftRef.current
-    const d = defiRef.current.defiNetValueUSD ?? 0
-    const next: PortfolioTotals = {
-      tokenValueUSD:       t,
-      nftValueUSD:         n,
-      defiNetValueUSD:     d,
-      totalValueUSD:       t + n + d,
-      defiActiveProtocols: defiRef.current.defiActiveProtocols ?? [],
-      defiTotalDebtUSD:    defiRef.current.defiTotalDebtUSD    ?? 0,
-      defiTotalSupplyUSD:  defiRef.current.defiTotalSupplyUSD  ?? 0,
-      defiPositions:       defiRef.current.defiPositions       ?? [],
-      tokens:              tokenListRef.current,
-      nfts:                nftListRef.current,
-      nftTotal:            nftTotalRef.current,
-      nftsNoKey:           nftsNoKeyRef.current,
+  // Persist to cache once all fetches for a load cycle complete
+  useEffect(() => {
+    if (status === 'done' && address) {
+      portfolioCache.set(address.toLowerCase(), { totals, fetchedAt: Date.now() })
     }
-    setTotals(next)
-    // Keep cache updated with latest partial data
-    portfolioCache.set(addr.toLowerCase(), { totals: next, fetchedAt: Date.now() })
-  }, [])
+  }, [status, totals, address])
 
   const load = useCallback(async (addr: string, force = false) => {
     const key   = addr.toLowerCase()
@@ -138,7 +179,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
     // Serve from cache if fresh and not forced
     if (!force && entry && Date.now() - entry.fetchedAt < CACHE_TTL_MS) {
-      setTotals(entry.totals)
+      dispatch({ type: 'SEED', totals: entry.totals })
       setStatus('done')
       setLastUpdated(new Date(entry.fetchedAt))
       return
@@ -150,28 +191,9 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
     // Seed from cache while re-fetching so UI doesn't flash empty
     if (entry) {
-      tokenRef.current     = entry.totals.tokenValueUSD
-      nftRef.current       = entry.totals.nftValueUSD
-      tokenListRef.current = entry.totals.tokens
-      nftListRef.current   = entry.totals.nfts
-      nftTotalRef.current  = entry.totals.nftTotal
-      nftsNoKeyRef.current = entry.totals.nftsNoKey
-      defiRef.current  = {
-        defiNetValueUSD:     entry.totals.defiNetValueUSD,
-        defiTotalDebtUSD:    entry.totals.defiTotalDebtUSD,
-        defiTotalSupplyUSD:  entry.totals.defiTotalSupplyUSD,
-        defiActiveProtocols: entry.totals.defiActiveProtocols,
-        defiPositions:       entry.totals.defiPositions,
-      }
-      setTotals(entry.totals)
+      dispatch({ type: 'SEED', totals: entry.totals })
     } else {
-      tokenRef.current     = 0
-      nftRef.current       = 0
-      tokenListRef.current = []
-      nftListRef.current   = []
-      nftTotalRef.current  = 0
-      nftsNoKeyRef.current = false
-      defiRef.current      = {}
+      dispatch({ type: 'RESET' })
     }
 
     setStatus('loading')
@@ -180,9 +202,11 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       try {
         const data = await cachedFetch<any>('/api/token-exposure', addr)
         if (loadingAddr.current !== key) return // stale
-        tokenRef.current     = Number(data.totalValue ?? 0)
-        tokenListRef.current = Array.isArray(data.tokens) ? data.tokens : []
-        flush(addr)
+        dispatch({
+          type:   'SET_TOKENS',
+          value:  Number(data.totalValue ?? 0),
+          tokens: Array.isArray(data.tokens) ? data.tokens : [],
+        })
         setStatus(s => s === 'loading' ? 'partial' : s)
       } catch { /* keeps previous value */ }
     }
@@ -192,15 +216,16 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         const data = await cachedFetch<any>('/api/nfts', addr)
         if (loadingAddr.current !== key) return
         if (data.error === 'no_api_key') {
-          nftsNoKeyRef.current = true
-          flush(addr)
+          dispatch({ type: 'SET_NFTS_NO_KEY' })
           return
         }
-        nftRef.current       = Number(data.nftValue ?? 0)
-        nftListRef.current   = Array.isArray(data.nfts) ? data.nfts : []
-        nftTotalRef.current  = Number(data.total ?? 0)
-        nftsNoKeyRef.current = false
-        flush(addr)
+        dispatch({
+          type:  'SET_NFTS',
+          value: Number(data.nftValue ?? 0),
+          nfts:  Array.isArray(data.nfts) ? data.nfts : [],
+          total: Number(data.total ?? 0),
+          noKey: false,
+        })
         setStatus(s => s === 'loading' ? 'partial' : s)
       } catch { /* keeps previous value */ }
     }
@@ -209,15 +234,15 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       try {
         const data = await cachedFetch<any>('/api/defi', addr)
         if (loadingAddr.current !== key) return
-        const s    = data.summary ?? {}
-        defiRef.current = {
-          defiNetValueUSD:     Number(s.netValueUSD     ?? 0),
-          defiTotalDebtUSD:    Number(s.totalDebtUSD    ?? 0),
-          defiTotalSupplyUSD:  Number(s.totalSupplyUSD  ?? 0),
-          defiActiveProtocols: Array.isArray(s.activeProtocols) ? s.activeProtocols : [],
-          defiPositions:       Array.isArray(data.positions) ? data.positions : [],
-        }
-        flush(addr)
+        const s = data.summary ?? {}
+        dispatch({
+          type:      'SET_DEFI',
+          netValue:  Number(s.netValueUSD    ?? 0),
+          debtUSD:   Number(s.totalDebtUSD   ?? 0),
+          supplyUSD: Number(s.totalSupplyUSD ?? 0),
+          protocols: Array.isArray(s.activeProtocols) ? s.activeProtocols : [],
+          positions: Array.isArray(data.positions)    ? data.positions    : [],
+        })
         setStatus(s2 => s2 === 'loading' ? 'partial' : s2)
       } catch { /* keeps previous value */ }
     }
@@ -225,12 +250,11 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     await Promise.allSettled([fetchTokens(), fetchNFTs(), fetchDefi()])
 
     if (loadingAddr.current === key) {
-      flush(addr)
       setStatus('done')
       setLastUpdated(new Date())
       loadingAddr.current = null
     }
-  }, [flush])
+  }, [])
 
   // Debounce address changes to avoid wagmi flicker on navigation
   useEffect(() => {
@@ -239,7 +263,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const hasCached = address && portfolioCache.has(address.toLowerCase())
       if (!hasCached) {
         loadingAddr.current = null
-        setTotals(ZERO)
+        dispatch({ type: 'RESET' })
         setStatus('idle')
         setLastUpdated(null)
       }

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getEthPriceData } from '@/lib/ink'
 
-// Cache on the server for 30 seconds — all clients share one upstream call
-export const revalidate = 30
+// Cache on the server for 5 minutes — all clients share one upstream call
+export const revalidate = 300
 
 export async function GET() {
   try {

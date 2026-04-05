@@ -53,6 +53,7 @@ async function getKV(): Promise<KV | null> {
 // ─── In-memory fallback (local dev / KV unavailable) ──────────────────────────
 
 const memStore = new Map<string, string>()
+const MAX_MEMSTORE_ENTRIES = 500
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -84,9 +85,16 @@ export async function kvGet<T>(key: string, softTtlMs: number): Promise<CacheRes
   if (!raw) return { data: null, fresh: false }
 
   try {
-    const envelope: Envelope<T> = JSON.parse(raw)
-    const age = Date.now() - envelope.t
-    return { data: envelope.d, fresh: age < softTtlMs }
+    const envelope = JSON.parse(raw)
+    if (
+      typeof envelope !== 'object' || envelope === null ||
+      !('d' in envelope) || !('t' in envelope) ||
+      typeof envelope.t !== 'number'
+    ) {
+      return { data: null, fresh: false }
+    }
+    const age = Date.now() - (envelope as Envelope<T>).t
+    return { data: (envelope as Envelope<T>).d, fresh: age < softTtlMs }
   } catch {
     return { data: null, fresh: false }
   }
@@ -106,6 +114,15 @@ export async function kvSet<T>(key: string, data: T, hardTtlSec: number): Promis
 
   // Always write to in-memory (guarantees same-isolate cache works)
   memStore.set(key, raw)
+
+  // Apply eviction if memStore exceeds max entries
+  if (memStore.size > MAX_MEMSTORE_ENTRIES) {
+    const entries = Array.from(memStore.entries())
+    // Delete oldest entries (FIFO)
+    for (let i = 0; i < Math.floor(entries.length * 0.1); i++) {
+      memStore.delete(entries[i][0])
+    }
+  }
 
   // Also try KV for cross-isolate persistence
   try {
