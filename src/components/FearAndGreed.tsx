@@ -211,7 +211,7 @@ export default function FearAndGreed() {
           <div className="mt-1 mb-4 text-center">
             <span
               className="text-base font-bold"
-              style={{ ...SORA, color: getColor(data.now.value) }}
+              style={{ ...JAKARTA, color: getColor(data.now.value) }}
             >
               {data.now.label}
             </span>
