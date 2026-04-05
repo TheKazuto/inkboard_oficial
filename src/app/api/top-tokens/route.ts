@@ -5,11 +5,11 @@ import { getCoinGeckoHeaders } from '@/lib/priceService'
 export const revalidate = 0
 
 // KV cache — shared across all isolates/users
-// SOFT_TTL = 5min  →  fresh window
-// HARD_TTL = 15min →  stale fallback stays available 10min after soft miss
+// SOFT_TTL = 1h  →  fresh window (market cap rarely changes within 1h)
+// HARD_TTL = 2h  →  stale fallback stays available 1h after soft miss
 const CACHE_KEY = 'top-tokens'
-const SOFT_TTL  = 5 * 60 * 1000  // 5 minutes (ms)
-const HARD_TTL  = 15 * 60         // 15 minutes (seconds)
+const SOFT_TTL  = 60 * 60 * 1000  // 1 hour (ms)
+const HARD_TTL  = 2 * 60 * 60     // 2 hours (seconds)
 
 export async function GET() {
   // Fast path — serve from KV if fresh
