@@ -48,7 +48,7 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
       <p className="text-gray-400 mb-0.5">
         {new Date(label).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
       </p>
-      <p className="font-bold text-violet-700">{fmtValue(payload[0].value)}</p>
+      <p className="font-bold text-violet-700">{fmtValue(payload[0].value ?? 0)}</p>
     </div>
   )
 }
