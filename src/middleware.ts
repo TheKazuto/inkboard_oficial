@@ -1,22 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
-// ─── CSP ─────────────────────────────────────────────────────────────────────
-// Applied via middleware because next.config.js headers() does NOT work
-// on Cloudflare Workers with OpenNext.
-// Notes:
-//   - unsafe-eval removed; re-add if a library requires it at runtime
-//   - http: removed from img-src/connect-src/frame-src (HTTPS-only in production)
+// ─── CSP — Hardened with specific domain allowlists ──────────────────────────
+// Replaced wildcard 'https:' with explicit trusted domains.
+// 'unsafe-inline' retained for compatibility with Next.js runtime scripts
+// and the theme-detection script in layout.tsx.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https:",
+  "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.walletconnect.com https://*.walletconnect.org https://*.rainbow.me",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
-  "img-src 'self' data: blob: https:",
-  "connect-src 'self' https: wss:",
-  "frame-src 'self' https:",
-  "worker-src 'self' blob: https:",
+  "img-src 'self' data: blob: https://*.coingecko.com https://*.geckoterminal.com https://*.llamao.fi https://*.githubusercontent.com https://*.ipfs.io https://*.pinata.cloud https://*.inkyswap.com https://*.velodrome.finance https://*.tydro.com https://*.nado.xyz",
+  "connect-src 'self' https://rpc-gel.inkonchain.com https://rpc-qnd.inkonchain.com https://api.coingecko.com https://api.geckoterminal.com https://yields.llama.fi https://api.merkl.xyz https://api.vfat.io https://inkyswap.com https://archive.prod.nado.xyz https://api.tydro.com https://explorer.inkonchain.com https://api.inkscan.io https://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.com wss://*.walletconnect.org https://api.inkboard.pro https://li.quest https://api.thegraph.com https://api.dexscreener.com https://*.inkonchain.com",
+  "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org",
+  "worker-src 'self' blob:",
   "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
 ].join('; ')
 
 function setSecurityHeaders(res: NextResponse): void {
@@ -26,24 +26,24 @@ function setSecurityHeaders(res: NextResponse): void {
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()')
+  // X-XSS-Protection: 0 is intentional — modern browsers ignore this header
+  // and it can introduce vulnerabilities. CSP is the proper XSS defense.
   res.headers.set('X-XSS-Protection', '0')
   res.headers.set('X-Permitted-Cross-Domain-Policies', 'none')
+  // COOP — prevents other origins from opening the page in a shared process
+  res.headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+  // COEP — prevents loading cross-origin resources without explicit permission
+  res.headers.set('Cross-Origin-Embedder-Policy', 'credentialless')
 }
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
-// Uses Cloudflare KV for cross-isolate persistence.
-// Falls back to in-memory Map during local dev or on KV failure.
-//
-// Note: KV read-modify-write is not atomic — a few extra requests may slip
-// through under burst concurrency. This is acceptable for approximate rate
-// limiting; use Durable Objects for strict atomic enforcement.
 
 interface KV {
   get(key: string, type: 'text'): Promise<string | null>
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>
 }
 
-interface RateEntry { count: number; resetAt: number }
+interface RateEntry { count: number; resetAt: number; lastAccess: number }
 
 const WINDOW_MS = 60_000
 const MAX_MEMSTORE_ENTRIES = 500
@@ -67,8 +67,6 @@ function getLimit(pathname: string): number {
   return ROUTE_LIMITS.default
 }
 
-// cf-connecting-ip is set by Cloudflare and cannot be spoofed by clients.
-// x-forwarded-for is kept as fallback for local dev only.
 function getClientIp(req: NextRequest): string {
   return (
     req.headers.get('cf-connecting-ip') ??
@@ -86,7 +84,6 @@ async function getRateLimitKV(): Promise<KV | null> {
   }
 }
 
-// In-memory fallback (local dev / KV unavailable)
 const memStore = new Map<string, RateEntry>()
 
 async function checkRateLimit(
@@ -102,7 +99,7 @@ async function checkRateLimit(
       let entry: RateEntry
 
       if (!raw) {
-        entry = { count: 1, resetAt: now + WINDOW_MS }
+        entry = { count: 1, resetAt: now + WINDOW_MS, lastAccess: now }
       } else {
         try {
           const parsed = JSON.parse(raw)
@@ -112,12 +109,12 @@ async function checkRateLimit(
             typeof parsed.resetAt === 'number' &&
             now <= parsed.resetAt
           ) {
-            entry = { count: parsed.count + 1, resetAt: parsed.resetAt }
+            entry = { count: parsed.count + 1, resetAt: parsed.resetAt, lastAccess: now }
           } else {
-            entry = { count: 1, resetAt: now + WINDOW_MS }
+            entry = { count: 1, resetAt: now + WINDOW_MS, lastAccess: now }
           }
         } catch {
-          entry = { count: 1, resetAt: now + WINDOW_MS }
+          entry = { count: 1, resetAt: now + WINDOW_MS, lastAccess: now }
         }
       }
 
@@ -132,17 +129,21 @@ async function checkRateLimit(
   // In-memory fallback
   const entry = memStore.get(key)
   if (!entry || now > entry.resetAt) {
-    memStore.set(key, { count: 1, resetAt: now + WINDOW_MS })
+    memStore.set(key, { count: 1, resetAt: now + WINDOW_MS, lastAccess: now })
   } else {
-    memStore.set(key, { ...entry, count: entry.count + 1 })
+    memStore.set(key, { ...entry, count: entry.count + 1, lastAccess: now })
   }
 
-  // Apply eviction if memStore exceeds max entries
+  // Eviction: delete expired entries first, then LRU
   if (memStore.size > MAX_MEMSTORE_ENTRIES) {
     const entries = Array.from(memStore.entries())
-    // Delete oldest entries (FIFO)
-    for (let i = 0; i < Math.floor(entries.length * 0.1); i++) {
-      memStore.delete(entries[i][0])
+    // First, remove expired entries
+    const expired = entries.filter(([, e]) => now > e.resetAt)
+    const toDelete = expired.length > 0
+      ? expired.slice(0, Math.max(1, Math.floor(entries.length * 0.1)))
+      : entries.sort((a, b) => a[1].lastAccess - b[1].lastAccess).slice(0, Math.max(1, Math.floor(entries.length * 0.1)))
+    for (const [k] of toDelete) {
+      memStore.delete(k)
     }
   }
 
@@ -155,14 +156,12 @@ async function checkRateLimit(
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Non-API routes: just apply security headers
   if (!pathname.startsWith('/api/')) {
     const res = NextResponse.next()
     setSecurityHeaders(res)
     return res
   }
 
-  // API routes: security headers + rate limiting
   const ip    = getClientIp(req)
   const limit = getLimit(pathname)
   const key   = `rl:${ip}::${pathname}`
@@ -172,8 +171,8 @@ export async function middleware(req: NextRequest) {
   if (!allowed) {
     const now         = Date.now()
     const retryAfter  = Math.ceil((resetAt - now) / 1000)
-    return new NextResponse(
-      JSON.stringify({ error: 'Too many requests', retryAfter }),
+    const res = new NextResponse(
+      JSON.stringify({ error: 'Too many requests. Please wait before trying again.' }),
       {
         status: 429,
         headers: {
@@ -185,6 +184,9 @@ export async function middleware(req: NextRequest) {
         },
       }
     )
+    // Apply security headers to 429 responses as well
+    setSecurityHeaders(res)
+    return res
   }
 
   const res = NextResponse.next()
@@ -195,7 +197,6 @@ export async function middleware(req: NextRequest) {
   return res
 }
 
-// Match ALL routes (pages + API) — excludes only static assets
 export const config = {
   matcher: '/((?!_next/static|_next/image|favicon\\.ico|apple-touch-icon\\.png|ink-logo\\.jpg|inkboard-logo\\.png|ads\\.txt).*)',
 }
