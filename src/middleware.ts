@@ -7,7 +7,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
 // and the theme-detection script in layout.tsx.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.walletconnect.com https://*.walletconnect.org https://*.rainbow.me",
+  "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.walletconnect.com https://*.walletconnect.org https://*.rainbow.me https://static.cloudflareinsights.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://*.coingecko.com https://*.geckoterminal.com https://*.llamao.fi https://*.githubusercontent.com https://*.ipfs.io https://*.pinata.cloud https://*.inkyswap.com https://*.velodrome.finance https://*.tydro.com https://*.nado.xyz",
