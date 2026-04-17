@@ -25,21 +25,43 @@ export const inkMainnet = defineChain({
 })
 
 const wcProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
-if (!wcProjectId && typeof window !== 'undefined') {
-  console.warn('[InkBoard] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set. WalletConnect connections will be disabled.')
+
+// Fail gracefully when WalletConnect Project ID is not configured
+// instead of sending a bogus value to WalletConnect infrastructure
+if (!wcProjectId) {
+  console.error('[InkBoard] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set. Wallet connections will be disabled.')
 }
 
-const wagmiConfig = getDefaultConfig({
-  appName:   'InkBoard',
-  projectId: wcProjectId ?? 'MISSING_WALLETCONNECT_PROJECT_ID',
-  chains:    [inkMainnet],
-  ssr:       false,
-})
+const wagmiConfig = wcProjectId
+  ? getDefaultConfig({
+      appName:   'InkBoard',
+      projectId: wcProjectId,
+      chains:    [inkMainnet],
+      ssr:       false,
+    })
+  : null
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },
   }))
+
+  if (!wagmiConfig) {
+    // WalletConnect not configured — render without wallet features
+    return (
+      <QueryClientProvider client={queryClient}>
+        <PreferencesProvider>
+          <WalletContextProvider disabled>
+            <PortfolioProvider>
+              <TransactionProvider>
+                {children}
+              </TransactionProvider>
+            </PortfolioProvider>
+          </WalletContextProvider>
+        </PreferencesProvider>
+      </QueryClientProvider>
+    )
+  }
 
   return (
     <WagmiProvider config={wagmiConfig}>

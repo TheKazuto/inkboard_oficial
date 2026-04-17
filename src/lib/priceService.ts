@@ -12,7 +12,8 @@ import { kvGet, kvSet } from '@/lib/kvCache'
 export function getCoinGeckoHeaders(): HeadersInit {
   const headers: HeadersInit = { 'Accept': 'application/json' }
   if (process.env.COINGECKO_API_KEY) {
-    headers['x-cg-demo-api-key'] = process.env.COINGECKO_API_KEY
+    // Use pro API key header if available, fallback to demo
+    headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY
   }
   return headers
 }
@@ -42,11 +43,9 @@ export interface PriceEntry {
 export type PriceMap = Record<CoinId, PriceEntry>
 
 // ─── Cache config ──────────────────────────────────────────────────────────────
-// SOFT_TTL increased from 60s → 5min: price data this fresh is more than adequate
-// for a DeFi dashboard, and reduces CoinGecko calls by 5×.
 const CACHE_KEY = 'cg-prices'
-const SOFT_TTL  = 5 * 60 * 1000  // 5 minutes (ms) — fresh window
-const HARD_TTL  = 15 * 60        // 15 minutes (seconds) — stale fallback window
+const SOFT_TTL  = 5 * 60 * 1000  // 5 minutes (ms)
+const HARD_TTL  = 15 * 60        // 15 minutes (seconds)
 
 let inflight: Promise<PriceMap> | null = null
 
@@ -74,10 +73,6 @@ async function fetchFromCoinGecko(): Promise<PriceMap> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Get prices for ALL known Ink ecosystem tokens in one shot.
- * Cached in KV for 5 minutes; stale data returned on upstream failure.
- */
 export async function getAllPrices(): Promise<PriceMap> {
   const cached = await kvGet<PriceMap>(CACHE_KEY, SOFT_TTL)
   if (cached.data && cached.fresh) return cached.data
@@ -101,13 +96,11 @@ export async function getAllPrices(): Promise<PriceMap> {
   return inflight
 }
 
-/** Convenience: get a single coin price. */
 export async function getPrice(coinId: string): Promise<number> {
   const prices = await getAllPrices()
   return prices[coinId]?.usd ?? 0
 }
 
-/** Convenience: get ETH price + 24h change. */
 export async function getEthPriceFromService(): Promise<{
   price: number; change24h: number; changeAmount: number
 }> {
@@ -121,11 +114,16 @@ export async function getEthPriceFromService(): Promise<{
 
 /** Fetch historical price data from CoinGecko for a coin over N days. */
 export async function fetchPriceHistory(coinId: string, days: number): Promise<[number, number][]> {
+  // Validate coinId to prevent URL injection
+  if (!/^[a-z0-9-]+$/.test(coinId)) {
+    console.error('[priceService] Invalid coinId:', coinId)
+    return []
+  }
+
   const cacheKey = `ph:${coinId}:${days}`
   const softTtlMs = 60 * 60 * 1000  // 1 hour
   const hardTtlSec = 2 * 60 * 60    // 2 hours
 
-  // Fast path — serve from KV if fresh
   const cached = await kvGet<[number, number][]>(cacheKey, softTtlMs)
   if (cached.data && cached.fresh) return cached.data
 
@@ -144,7 +142,6 @@ export async function fetchPriceHistory(coinId: string, days: number): Promise<[
     return prices
   } catch (e) {
     console.error(`[priceService] fetchPriceHistory(${coinId}, ${days}) failed:`, e)
-    // Return stale data if available rather than empty
     return cached.data ?? []
   }
 }

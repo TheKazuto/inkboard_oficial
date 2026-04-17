@@ -12,8 +12,8 @@ import { createContext, useContext, useState, useEffect, useRef, ReactNode } fro
 import { useAccount, useDisconnect } from 'wagmi'
 
 interface WalletContextValue {
-  address:       string | null  // raw wagmi value (may flicker)
-  stableAddress: string | null  // debounced — use this for fetch triggers
+  address:       string | null
+  stableAddress: string | null
   isConnected:   boolean
   disconnect:    () => void
 }
@@ -29,25 +29,26 @@ export function useWallet() {
   return useContext(WalletContext)
 }
 
-export function WalletContextProvider({ children }: { children: ReactNode }) {
-  const { address, isConnected } = useAccount()
-  const { disconnect }           = useDisconnect()
+export function WalletContextProvider({ children, disabled }: { children: ReactNode; disabled?: boolean }) {
+  const account = useAccount()
+  const disconnectHook = useDisconnect()
+
+  const address = disabled ? null : account.address
+  const isConnected = disabled ? false : account.isConnected
+  const disconnect = disabled ? (() => {}) : disconnectHook.disconnect
 
   const rawAddress    = (isConnected && address) ? address : null
   const [stable, setStable] = useState<string | null>(rawAddress)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    // Clear any pending debounce
     if (timerRef.current) clearTimeout(timerRef.current)
 
     if (rawAddress) {
-      // Address present — update stable after short debounce
       timerRef.current = setTimeout(() => {
         setStable(rawAddress)
       }, 150)
     } else {
-      // Disconnected — wait longer before clearing (avoids nav flicker)
       timerRef.current = setTimeout(() => {
         setStable(null)
       }, 500)

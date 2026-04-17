@@ -1,0 +1,690 @@
+openapi: 3.0.3
+info:
+  title: InkBoard API
+  description: |
+    DeFi aggregation dashboard API for the Ink Network ecosystem (chainId: 57073).
+    Provides portfolio tracking, yield aggregation, security scanning, cross-chain swap quotes,
+    and market data across 5+ Ink protocols.
+
+    ## Authentication
+    No API key required for read-only endpoints. Rate limits apply per IP address.
+
+    ## Rate Limits
+    - Default: 60 requests/minute per IP
+    - Portfolio/DeFi endpoints: 10-20 requests/minute
+    - Scan protocol: 5 requests/minute
+
+    ## Data Sources
+    - CoinGecko (prices)
+    - Velodrome, InkySwap, Tydro, Nado, Curve (yield data)
+    - LI.FI (cross-chain swaps)
+    - Blockscout (transactions)
+  version: 0.2.0
+  contact:
+    name: Shinka Labs
+    url: https://inkboard.pro
+    email: contact@shinkalabs.tech
+  license:
+    name: Proprietary
+    url: https://inkboard.pro
+
+servers:
+  - url: https://inkboard.pro/api
+    description: Production
+
+paths:
+  /best-aprs:
+    get:
+      summary: Get best APRs across Ink protocols
+      description: Returns aggregated APR data from Velodrome, InkySwap, Tydro, Nado, and Curve. Sorted by APR descending.
+      operationId: getBestAprs
+      tags:
+        - Yield
+      responses:
+        '200':
+          description: List of APR entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AprEntry'
+        '502':
+          description: Upstream service error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /defi:
+    get:
+      summary: Get DeFi positions for an address
+      description: Returns all active DeFi positions (liquidity pools, lending, vaults) for a wallet address across Ink protocols.
+      operationId: getDefiPositions
+      tags:
+        - Portfolio
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+          description: EVM wallet address
+      responses:
+        '200':
+          description: DeFi positions data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  positions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DefiPosition'
+                  totalValueUSD:
+                    type: number
+        '400':
+          description: Invalid address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /nfts:
+    get:
+      summary: Get NFTs for an address
+      description: Returns NFT holdings for a wallet address on Ink Network with metadata.
+      operationId: getNfts
+      tags:
+        - Portfolio
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: NFT holdings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nfts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NftItem'
+                  totalValueUSD:
+                    type: number
+
+  /transactions:
+    get:
+      summary: Get transaction history
+      description: Returns classified transaction history for an address on Ink Network.
+      operationId: getTransactions
+      tags:
+        - Portfolio
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: Transaction history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Transaction'
+
+  /token-exposure:
+    get:
+      summary: Get token balances and exposure
+      description: Returns ERC20 token balances for an address on Ink Network.
+      operationId: getTokenExposure
+      tags:
+        - Portfolio
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: Token balances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TokenBalance'
+                  totalValueUSD:
+                    type: number
+
+  /portfolio-history:
+    get:
+      summary: Get portfolio value history
+      description: Returns historical portfolio value data for an address over a specified time range.
+      operationId: getPortfolioHistory
+      tags:
+        - Portfolio
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+            enum: [7, 30, 90, 180, 365]
+      responses:
+        '200':
+          description: Portfolio history data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      type: array
+                      items:
+                        type: number
+                      minItems: 2
+                      maxItems: 2
+
+  /eth-price:
+    get:
+      summary: Get ETH price
+      description: Returns current ETH price in USD with 24h change.
+      operationId: getEthPrice
+      tags:
+        - Market Data
+      responses:
+        '200':
+          description: ETH price data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceData'
+
+  /exchange-rates:
+    get:
+      summary: Get exchange rates
+      description: Returns exchange rates for major currencies.
+      operationId: getExchangeRates
+      tags:
+        - Market Data
+      responses:
+        '200':
+          description: Exchange rates
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: number
+
+  /fear-greed:
+    get:
+      summary: Get Fear & Greed Index
+      description: Returns the current Crypto Fear & Greed Index value and classification.
+      operationId: getFearGreed
+      tags:
+        - Market Data
+      responses:
+        '200':
+          description: Fear & Greed data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FearGreed'
+
+  /top-tokens:
+    get:
+      summary: Get top Ink ecosystem tokens
+      description: Returns top tokens in the Ink ecosystem by market cap.
+      operationId: getTopTokens
+      tags:
+        - Market Data
+      responses:
+        '200':
+          description: Top tokens list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /top-gainers:
+    get:
+      summary: Get top 24h gainers
+      description: Returns tokens with the highest 24h price gains in the Ink ecosystem.
+      operationId: getTopGainers
+      tags:
+        - Market Data
+      responses:
+        '200':
+          description: Top gainers list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /approvals-logs:
+    get:
+      summary: Get token approval logs
+      description: Returns ERC20 approval (Allowance) events for an address.
+      operationId: getApprovalLogs
+      tags:
+        - Security
+      parameters:
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: chainId
+          in: query
+          schema:
+            type: integer
+            default: 57073
+        - name: topic0
+          in: query
+          schema:
+            type: string
+            default: '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925'
+        - name: fromBlock
+          in: query
+          schema:
+            type: string
+            default: '0'
+        - name: toBlock
+          in: query
+          schema:
+            type: string
+            default: 'latest'
+      responses:
+        '200':
+          description: Approval logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  result:
+                    type: array
+                    items:
+                      type: object
+
+  /scan-protocol:
+    get:
+      summary: Scan DeFi protocol for API endpoints
+      description: |
+        Scans a DeFi protocol frontend for API endpoints, subgraphs, and contract addresses
+        relevant to the Ink ecosystem. Only allowlisted DeFi domains are permitted.
+      operationId: scanProtocol
+      tags:
+        - Security
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: URL of the DeFi protocol to scan (must be an allowlisted domain)
+      responses:
+        '200':
+          description: Scan results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanResult'
+        '400':
+          description: Invalid or disallowed URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /lifi-quote:
+    get:
+      summary: Get cross-chain swap quote
+      description: Returns a swap quote from LI.FI for cross-chain token swaps.
+      operationId: getLifiQuote
+      tags:
+        - Swaps
+      parameters:
+        - name: fromChain
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: Source chain ID
+        - name: fromToken
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+          description: Source token address
+        - name: fromAmount
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\d+$'
+          description: Amount in smallest unit (wei)
+        - name: toChain
+          in: query
+          schema:
+            type: integer
+        - name: toToken
+          in: query
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: slippage
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 0.5
+            default: 0.01
+      responses:
+        '200':
+          description: Swap quote
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /lifi-tokens:
+    get:
+      summary: Get LI.FI supported tokens
+      description: Returns tokens supported by LI.FI on a specific chain.
+      operationId: getLifiTokens
+      tags:
+        - Swaps
+      parameters:
+        - name: chain
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /lifi-chains:
+    get:
+      summary: Get LI.FI supported chains
+      description: Returns all chains supported by LI.FI.
+      operationId: getLifiChains
+      tags:
+        - Swaps
+      responses:
+        '200':
+          description: Chain list
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /lifi-status:
+    get:
+      summary: Get LI.FI transaction status
+      description: Returns the status of a cross-chain transaction.
+      operationId: getLifiStatus
+      tags:
+        - Swaps
+      parameters:
+        - name: txHash
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{64}$'
+      responses:
+        '200':
+          description: Transaction status
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /token-list:
+    get:
+      summary: Get token list from CoinGecko
+      description: Returns token list from CoinGecko for a specific platform.
+      operationId: getTokenList
+      tags:
+        - Market Data
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+
+components:
+  schemas:
+    AprEntry:
+      type: object
+      properties:
+        protocol:
+          type: string
+          example: "Velodrome"
+        logo:
+          type: string
+          format: uri
+        url:
+          type: string
+          format: uri
+        tokens:
+          type: array
+          items:
+            type: string
+        label:
+          type: string
+          example: "WETH-USDC (CL)"
+        apr:
+          type: number
+          example: 45.2
+        tvl:
+          type: number
+          example: 1500000
+        type:
+          type: string
+          enum: [pool, vault, lend]
+        isStable:
+          type: boolean
+
+    DefiPosition:
+      type: object
+      properties:
+        protocol:
+          type: string
+        type:
+          type: string
+          enum: [liquidity, lending, vault]
+        label:
+          type: string
+        netValueUSD:
+          type: number
+        apy:
+          type: number
+        logo:
+          type: string
+
+    NftItem:
+      type: object
+      properties:
+        contract:
+          type: string
+        tokenId:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+        collection:
+          type: string
+        estimatedValueUSD:
+          type: number
+
+    Transaction:
+      type: object
+      properties:
+        hash:
+          type: string
+        blockNumber:
+          type: string
+        timestamp:
+          type: integer
+        from:
+          type: string
+        to:
+          type: string
+        value:
+          type: string
+        type:
+          type: string
+          enum: [swap, send, receive, defi, nft, contract_interaction]
+        protocol:
+          type: string
+        tokens:
+          type: array
+          items:
+            type: object
+
+    TokenBalance:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        balance:
+          type: string
+        decimals:
+          type: integer
+        priceUSD:
+          type: number
+        valueUSD:
+          type: number
+        logo:
+          type: string
+
+    PriceData:
+      type: object
+      properties:
+        price:
+          type: number
+        change24h:
+          type: number
+        changeAmount:
+          type: number
+
+    FearGreed:
+      type: object
+      properties:
+        value:
+          type: integer
+        valueClassification:
+          type: string
+          enum: [Extreme Fear, Fear, Neutral, Greed, Extreme Greed]
+        timestamp:
+          type: string
+
+    ScanResult:
+      type: object
+      properties:
+        scanned:
+          type: string
+        chain:
+          type: object
+          properties:
+            name:
+              type: string
+            chainId:
+              type: integer
+            supported:
+              type: boolean
+            evidence:
+              type: array
+              items:
+                type: string
+        summary:
+          type: object
+          properties:
+            bundlesScanned:
+              type: integer
+            defiEndpoints:
+              type: integer
+            otherEndpoints:
+              type: integer
+            contractAddresses:
+              type: integer
+        defiEndpoints:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: object
+        contractAddresses:
+          type: array
+          items:
+            type: object
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        status:
+          type: integer

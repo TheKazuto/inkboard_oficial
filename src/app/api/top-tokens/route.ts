@@ -27,7 +27,7 @@ export async function GET() {
     if (!res.ok) {
       // Return stale data on upstream error rather than propagating the error
       if (cached.data) return NextResponse.json(cached.data, { headers: { 'X-Cache': 'STALE' } })
-      return NextResponse.json({ error: 'CoinGecko error', status: res.status }, { status: res.status })
+      return NextResponse.json({ message: 'Service temporarily unavailable' }, { status: 502 })
     }
 
     const data = await res.json()

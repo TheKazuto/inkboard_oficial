@@ -1,0 +1,22 @@
+User-agent: *
+Allow: /
+Allow: /api/
+Allow: /.well-known/
+Allow: /api/openapi.yaml
+
+# Block sensitive endpoints
+Disallow: /api/scan-protocol
+Disallow: /api/lifi-quote
+Disallow: /api/lifi-status
+Disallow: /api/lifi-tokens
+Disallow: /api/lifi-chains
+Disallow: /api/lifi-status
+
+# Block internal Next.js paths
+Disallow: /_next/
+Disallow: /api/mcp
+
+# AI agents are welcome — see /.well-known/agent.json for API capabilities
+# OpenAPI spec available at /api/openapi.yaml
+
+Sitemap: https://inkboard.pro/sitemap.xml

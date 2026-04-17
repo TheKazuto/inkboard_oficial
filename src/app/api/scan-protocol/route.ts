@@ -3,15 +3,14 @@ import { NextResponse } from 'next/server'
 export const revalidate = 0
 
 // ─── INK CHAIN IDENTIFIERS ───────────────────────────────────────────────────
-// Used to detect if a protocol's JS bundles reference the Ink chain
 const INK_CHAIN_ID    = 57073
-const INK_CHAIN_HEX   = '0xDEE1'  // 57073 in hex
+const INK_CHAIN_HEX   = '0xDEE1'
 const INK_IDENTIFIERS = [
   String(INK_CHAIN_ID), INK_CHAIN_HEX.toLowerCase(), 'inkonchain', 'ink_mainnet',
   'ink-mainnet', 'chainId:57073', 'chainid:57073', '"ink"',
 ]
 
-// ─── Known Ink DeFi contracts (for cross-referencing) ────────────────────────
+// ─── Known Ink DeFi contracts ────────────────────────────────────────────────
 const KNOWN_INK_CONTRACTS: Record<string, string> = {
   '0x4200000000000000000000000000000000000006': 'WETH',
   '0xf1815bd50389c46847f0bda824ec8da914045d14': 'USDC.e',
@@ -25,7 +24,7 @@ const KNOWN_INK_CONTRACTS: Record<string, string> = {
   '0x64445f0aecc51e94ad52d8ac56b7190e764e561a': 'FXS',
 }
 
-// ─── DeFi relevance keywords (for scoring endpoints) ─────────────────────────
+// ─── DeFi relevance keywords ─────────────────────────────────────────────────
 const DEFI_KEYWORDS = [
   'pool', 'pools', 'liquidity', 'swap', 'trade', 'tvl', 'apr', 'apy',
   'yield', 'vault', 'vaults', 'farm', 'farms', 'stake', 'staking',
@@ -36,19 +35,44 @@ const DEFI_KEYWORDS = [
   'factory', 'router', 'pair', 'pairs', 'quote', 'route', 'routes',
 ]
 
-// ─── SSRF protection ─────────────────────────────────────────────────────────
-const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|169\.254\.|0\.|::1|fc00:|fd)/
-const BLOCKED_HOSTNAMES = ['localhost', 'metadata.google.internal', 'metadata.google']
+// ─── SSRF protection — Allowlist of DeFi protocol domains ─────────────────────
+// Blocklist-based approach is vulnerable to DNS rebinding attacks.
+// We use an allowlist of known DeFi protocol domains instead.
+
+const ALLOWED_SCAN_DOMAINS = [
+  'velodrome.finance', 'inkyswap.com', 'nado.xyz', 'app.nado.xyz',
+  'tydro.com', 'app.tydro.com', 'curve.fi', 'defillama.com', 'llama.fi',
+  'merkl.xyz', 'explorer.inkonchain.com', 'inkscan.io', 'aave.com',
+  'uniswap.org', 'sushi.com', 'balancer.fi', 'yearn.finance',
+  'convexfinance.com', 'frax.finance', 'morpho.org', 'euler.finance',
+  'pendle.finance', 'beefy.finance', 'aerodrome.finance',
+  'pancakeswap.finance', 'quickswap.exchange', 'traderjoexyz.com',
+  'gmx.io', 'dydx.exchange', 'synthetix.io', 'compound.finance',
+  'makerdao.com', 'lido.fi', 'rocketpool.net', 'stargate.finance',
+  'hop.exchange', 'across.to', 'cbridge.celer.network', 'multichain.org',
+  'wormhole.com', 'layerzero.network', 'socket.tech', 'bungee.exchange',
+  'jumper.exchange', 'li.quest', 'coingecko.com', 'geckoterminal.com',
+  'dexscreener.com', 'defipulse.com', 'debank.com', 'zapper.fi',
+  'zerion.io', 'rotki.com', 'etherscan.io', 'blockscout.com', 'inkonchain.com',
+]
+
+function isAllowedDomain(url: string): boolean {
+  try {
+    const u = new URL(url)
+    const hostname = u.hostname.toLowerCase()
+    return ALLOWED_SCAN_DOMAINS.some(
+      domain => hostname === domain || hostname.endsWith('.' + domain)
+    )
+  } catch {
+    return false
+  }
+}
 
 function isSafeUrl(url: string): boolean {
   try {
     const u = new URL(url)
-    // Only allow HTTPS for production security
     if (u.protocol !== 'https:') return false
-    if (PRIVATE_IP_RE.test(u.hostname)) return false
-    if (BLOCKED_HOSTNAMES.some(h => u.hostname === h || u.hostname.endsWith('.' + h))) return false
-    if (u.hostname.endsWith('.local') || u.hostname.endsWith('.internal')) return false
-    return true
+    return isAllowedDomain(url)
   } catch { return false }
 }
 
@@ -56,7 +80,7 @@ function isSafeUrl(url: string): boolean {
 
 async function safeFetch(url: string, opts?: RequestInit): Promise<{ ok: boolean; status: number; text: string; error?: string }> {
   if (!isSafeUrl(url)) {
-    return { ok: false, status: 0, text: '', error: 'Blocked: unsafe URL' }
+    return { ok: false, status: 0, text: '', error: 'Blocked: domain not in allowlist' }
   }
   try {
     const res = await fetch(url, {
@@ -70,8 +94,9 @@ async function safeFetch(url: string, opts?: RequestInit): Promise<{ ok: boolean
     })
     const text = await res.text().catch(() => '')
     return { ok: res.ok, status: res.status, text }
-  } catch (e: any) {
-    return { ok: false, status: 0, text: '', error: e.message }
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Unknown error'
+    return { ok: false, status: 0, text: '', error: message }
   }
 }
 
@@ -113,15 +138,11 @@ function scoreDeFiRelevance(url: string, context: string): { score: number; hint
     }
   }
 
-  // Bonus for subgraph/TheGraph endpoints
   if (combined.includes('subgraph') || combined.includes('thegraph')) { score += 20; hints.push('subgraph') }
-  // Bonus for known DeFi API providers
   if (combined.includes('defillama') || combined.includes('llama.fi')) { score += 15; hints.push('defillama') }
   if (combined.includes('coingecko') || combined.includes('geckoterm')) { score += 10; hints.push('coingecko') }
   if (combined.includes('dexscreener')) { score += 10; hints.push('dexscreener') }
-  // Bonus for GraphQL
   if (combined.includes('graphql') || combined.includes('gql')) { score += 5; hints.push('graphql') }
-  // Bonus for versioned REST APIs
   if (/\/v[1-4]\//.test(url)) { score += 5; hints.push('versioned-api') }
 
   return { score: Math.min(100, score), hints }
@@ -142,7 +163,6 @@ function extractApiPatterns(js: string, sourceUrl: string): DiscoveredEndpoint[]
 
   let m: RegExpExecArray | null
 
-  // 1. Full HTTPS URLs that look like APIs
   const httpsRe = /["'`](https?:\/\/[a-z0-9._\-\/]+(?:api|graphql|gql|rpc|v\d|subgraph)[a-z0-9._\-\/]*(?:\?[^"'`\s]{0,100})?)["'`]/gi
   while ((m = httpsRe.exec(js)) !== null) {
     const url = m[1]
@@ -152,14 +172,12 @@ function extractApiPatterns(js: string, sourceUrl: string): DiscoveredEndpoint[]
     }
   }
 
-  // 2. Relative /api/... paths
   const relApiRe = /["'`](\/api\/[a-z0-9._\-\/]+)["'`]/gi
   while ((m = relApiRe.exec(js)) !== null) {
     const ctx = js.slice(Math.max(0, m.index - 60), m.index + m[1].length + 60)
     add(m[1], 'relative-api', ctx)
   }
 
-  // 3. fetch( or axios calls with URL
   const fetchRe = /(?:fetch|axios\.(?:get|post|put|request))\(\s*["'`]([^"'`\s]{5,200})["'`]/g
   while ((m = fetchRe.exec(js)) !== null) {
     const url = m[1]
@@ -169,28 +187,24 @@ function extractApiPatterns(js: string, sourceUrl: string): DiscoveredEndpoint[]
     }
   }
 
-  // 4. GraphQL endpoint patterns
   const gqlRe = /["'`]([^"'`\s]*(?:graphql|gql|subgraph)[^"'`\s]*)["'`]/gi
   while ((m = gqlRe.exec(js)) !== null) {
     const ctx = js.slice(Math.max(0, m.index - 60), m.index + m[1].length + 60)
     add(m[1], 'graphql', ctx)
   }
 
-  // 5. WebSocket endpoints
   const wsRe = /["'`](wss?:\/\/[^"'`\s]{5,200})["'`]/g
   while ((m = wsRe.exec(js)) !== null) {
     const ctx = js.slice(Math.max(0, m.index - 40), m.index + m[1].length + 40)
     add(m[1], 'websocket', ctx)
   }
 
-  // 6. Base URL variables
   const baseVarRe = /(?:baseURL|apiUrl|API_URL|BASE_URL|baseUrl|apiBase|API_BASE|API_ENDPOINT)\s*[:=]\s*["'`]([^"'`\s]{5,200})["'`]/g
   while ((m = baseVarRe.exec(js)) !== null) {
     const ctx = js.slice(Math.max(0, m.index - 20), m.index + m[1].length + 40)
     add(m[1], 'base-url-var', ctx)
   }
 
-  // 7. DeFi-specific URL patterns (broader match for pool/vault/farm URLs)
   const defiUrlRe = /["'`](https?:\/\/[^"'`\s]{5,200}(?:pool|vault|farm|stake|lend|swap|liquidity|reserve|market|gauge|reward|apr|apy|tvl|yield)[^"'`\s]{0,100})["'`]/gi
   while ((m = defiUrlRe.exec(js)) !== null) {
     const url = m[1]
@@ -200,7 +214,6 @@ function extractApiPatterns(js: string, sourceUrl: string): DiscoveredEndpoint[]
     }
   }
 
-  // 8. Contract addresses
   const addrRe = /["'`](0x[a-fA-F0-9]{40})["'`]/g
   const addrs = new Set<string>()
   while ((m = addrRe.exec(js)) !== null) addrs.add(m[1].toLowerCase())
@@ -247,33 +260,27 @@ function deduplicate(endpoints: DiscoveredEndpoint[]): DiscoveredEndpoint[] {
   return [...seen.values()]
 }
 
-// ─── Noise filter — Ink ecosystem focused ────────────────────────────────────
+// ─── Noise filter ────────────────────────────────────────────────────────────
 const NOISE_DOMAINS = [
-  // Block explorers
   'etherscan.io', 'arbiscan.io', 'bscscan.com', 'polygonscan.com', 'snowtrace.io',
   'ftmscan.com', 'celoscan.io', 'basescan.org', 'fraxscan.com', 'gnosisscan.io',
   'moonscan.io', 'aurorascan.dev', 'mantlescan.xyz', 'routescan.io', 'oklink.com',
   'kavascan.com', 'scrollscan.com', 'lineascan.build', 'blastscan.io',
-  // RPC providers
   'drpc.org', 'thirdweb.com', 'blastapi.io', 'nodies.app', 'ankr.com',
   'infura.io', 'alchemy.com', 'quicknode.com', 'chainnodes.org', '1rpc.io',
   'publicnode.com', 'llamarpc.com',
-  // Chain RPCs
   'arbitrum.io/rpc', 'mainnet.optimism.io', 'mainnet.base.org',
   'polygon-rpc.com', 'rpc.ftm.tools', 'rpc.gnosischain.com',
   'rpc.mantle.xyz', 'rpc.blast.io', 'rpc.scroll.io', 'rpc.linea.build',
   'era.zksync.io', 'rpc-gel.inkonchain.com',
-  // Analytics / tracking
   'freshping.io', 'sentry.io', 'intercom.io', 'hotjar.com',
   'google-analytics.com', 'googletagmanager.com', 'segment.io',
   'mixpanel.com', 'amplitude.com', 'datadog-agent',
-  // Governance (not pool data)
   'governance.aave.com', 'snapshot.org',
 ]
 
 const NOISE_PATTERNS = ['/rpc', '.rpc.', 'rpc.publicnode', '/etherscan', 'gasstation', 'blockexplorer']
 
-// Domains that should NEVER be filtered (known DeFi data sources)
 const KEEP_DOMAINS = [
   'api.curve.fi', 'api-core.curve.finance', 'curve.finance',
   'interface.gateway.uniswap.org', 'api.uniswap.org',
@@ -318,36 +325,33 @@ export async function GET(req: Request) {
 
   let targetUrl: URL
   try { targetUrl = new URL(target) } catch {
-    return NextResponse.json({ error: 'Invalid URL' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 })
   }
 
   if (!isSafeUrl(target)) {
-    return NextResponse.json({ error: 'URL blocked: only public HTTPS URLs are allowed' }, { status: 400 })
+    return NextResponse.json({ error: 'URL not allowed: only recognized DeFi protocol domains are permitted' }, { status: 400 })
   }
 
   const log: string[] = []
   const allEndpoints: DiscoveredEndpoint[] = []
   let inkEvidence: string[] = []
 
-  // Step 1: Fetch the main page HTML
   log.push(`[1/5] Fetching ${targetUrl.href}`)
   const page = await safeFetch(targetUrl.href)
   if (!page.ok) {
     return NextResponse.json({
-      error: `Could not fetch page: HTTP ${page.status} — ${page.error ?? 'unknown'}`,
+      error: 'Could not fetch target page',
       url: targetUrl.href,
     }, { status: 502 })
   }
   log.push(`Page fetched — ${page.text.length} chars`)
 
-  // Check if main HTML references Ink chain
   const htmlInk = detectInkSupport(page.text)
   if (htmlInk.supported) {
     inkEvidence.push(...htmlInk.evidence)
     log.push(`Ink chain detected in HTML: ${htmlInk.evidence.join(', ')}`)
   }
 
-  // Step 2: Extract API patterns from inline scripts
   log.push('[2/5] Scanning inline scripts...')
 
   if (page.text.includes('__NEXT_DATA__')) {
@@ -373,7 +377,6 @@ export async function GET(req: Request) {
   }
   if (inlineCount > 0) log.push(`  Inline scripts: ${inlineCount} patterns`)
 
-  // Step 3: Find external JS bundles
   log.push('[3/5] Finding JS bundles...')
   const scriptUrls = extractScriptUrls(page.text, targetUrl.href)
 
@@ -387,7 +390,6 @@ export async function GET(req: Request) {
 
   log.push(`  ${scriptUrls.length} total scripts, ${appBundles.length} app bundles to scan`)
 
-  // Step 4: Fetch and scan bundles in parallel
   log.push('[4/5] Scanning bundles...')
   const bundleResults = await Promise.allSettled(
     appBundles.map(async (scriptUrl) => {
@@ -406,7 +408,6 @@ export async function GET(req: Request) {
     if (r.status === 'fulfilled') allEndpoints.push(...r.value)
   }
 
-  // Step 5: Process results
   log.push('[5/5] Processing results...')
   const deduped = deduplicate(allEndpoints)
 
