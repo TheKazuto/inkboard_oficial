@@ -11,7 +11,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://*.coingecko.com https://*.geckoterminal.com https://*.llamao.fi https://*.githubusercontent.com https://*.ipfs.io https://*.pinata.cloud https://*.inkyswap.com https://*.velodrome.finance https://*.tydro.com https://*.nado.xyz",
-  "connect-src 'self' https://rpc-gel.inkonchain.com https://rpc-qnd.inkonchain.com https://api.coingecko.com https://api.geckoterminal.com https://yields.llama.fi https://api.merkl.xyz https://api.vfat.io https://inkyswap.com https://archive.prod.nado.xyz https://api.tydro.com https://explorer.inkonchain.com https://api.inkscan.io https://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.com wss://*.walletconnect.org https://api.inkboard.pro https://li.quest https://api.thegraph.com https://api.dexscreener.com https://*.inkonchain.com",
+  "connect-src 'self' https://rpc-gel.inkonchain.com https://rpc-qnd.inkonchain.com https://api.coingecko.com https://pro-api.coingecko.com https://api.geckoterminal.com https://yields.llama.fi https://api.merkl.xyz https://api.vfat.io https://inkyswap.com https://archive.prod.nado.xyz https://api.tydro.com https://explorer.inkonchain.com https://api.inkscan.io https://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.com wss://*.walletconnect.org https://api.inkboard.pro https://li.quest https://api.thegraph.com https://api.dexscreener.com https://*.inkonchain.com",
   "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org",
   "worker-src 'self' blob:",
   "object-src 'none'",

@@ -9,13 +9,50 @@ import { kvGet, kvSet } from '@/lib/kvCache'
 
 // ─── CoinGecko API helpers ────────────────────────────────────────────────────
 
-export function getCoinGeckoHeaders(): HeadersInit {
-  const headers: HeadersInit = { 'Accept': 'application/json' }
-  if (process.env.COINGECKO_API_KEY) {
-    // Use pro API key header if available, fallback to demo
-    headers['x-cg-pro-api-key'] = process.env.COINGECKO_API_KEY
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+export function getCoinGeckoApiBaseUrl(): string {
+  const configuredBaseUrl = process.env.COINGECKO_API_BASE_URL
+  if (configuredBaseUrl) return normalizeBaseUrl(configuredBaseUrl)
+
+  const keyType = (
+    process.env.COINGECKO_API_KEY_TYPE ??
+    process.env.COINGECKO_API_PLAN ??
+    ''
+  ).toLowerCase()
+
+  if (keyType === 'pro' || keyType === 'paid') {
+    return 'https://pro-api.coingecko.com/api/v3'
   }
+
+  return 'https://api.coingecko.com/api/v3'
+}
+
+export function getCoinGeckoHeaders(): HeadersInit {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const apiKey = process.env.COINGECKO_API_KEY?.trim()
+  if (!apiKey) return headers
+
+  const baseUrl = getCoinGeckoApiBaseUrl()
+  const isProApi = baseUrl.includes('pro-api.coingecko.com')
+  headers[isProApi ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key'] = apiKey
   return headers
+}
+
+export function buildCoinGeckoUrl(path: string, params?: Record<string, string | number | boolean>): string {
+  const baseUrl = getCoinGeckoApiBaseUrl()
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  const url = new URL(`${baseUrl}${normalizedPath}`)
+
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, String(value))
+    }
+  }
+
+  return url.toString()
 }
 
 // ─── All CoinGecko IDs used across the project ────────────────────────────────
@@ -52,7 +89,11 @@ let inflight: Promise<PriceMap> | null = null
 // ─── Fetcher ──────────────────────────────────────────────────────────────────
 async function fetchFromCoinGecko(): Promise<PriceMap> {
   const ids = ALL_PRICE_IDS.join(',')
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`
+  const url = buildCoinGeckoUrl('/simple/price', {
+    ids,
+    vs_currencies: 'usd',
+    include_24hr_change: true,
+  })
 
   const res = await fetch(url, {
     headers: getCoinGeckoHeaders(),
@@ -128,7 +169,11 @@ export async function fetchPriceHistory(coinId: string, days: number): Promise<[
   if (cached.data && cached.fresh) return cached.data
 
   try {
-    const url = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=daily`
+    const url = buildCoinGeckoUrl(`/coins/${coinId}/market_chart`, {
+      vs_currency: 'usd',
+      days,
+      interval: 'daily',
+    })
     const res = await fetch(url, { headers: getCoinGeckoHeaders(), signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`CoinGecko ${res.status}`)
 

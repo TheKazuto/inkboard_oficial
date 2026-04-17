@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { KNOWN_TOKENS, rpcBatch, buildBalanceOfCall } from '@/lib/ink'
-import { getAllPrices } from '@/lib/priceService'
+import { buildCoinGeckoUrl, getAllPrices, getCoinGeckoHeaders } from '@/lib/priceService'
 import { kvGet, kvSet } from '@/lib/kvCache'
 
 export const revalidate = 0
@@ -72,12 +72,13 @@ export async function GET(req: NextRequest) {
     } else {
       // Fetch images from /coins/markets (only when image cache is cold)
       try {
-        const cgHeaders: Record<string, string> = { 'Accept': 'application/json' }
-        const cgKey = process.env.COINGECKO_API_KEY
-        if (cgKey) cgHeaders['x-cg-demo-api-key'] = cgKey
         const marketRes = await fetch(
-          `https://api.coingecko.com/api/v3/coins/markets?ids=${coinIds.join(',')}&vs_currency=usd&per_page=20`,
-          { headers: cgHeaders, next: { revalidate: 3600 } }
+          buildCoinGeckoUrl('/coins/markets', {
+            ids: coinIds.join(','),
+            vs_currency: 'usd',
+            per_page: 20,
+          }),
+          { headers: getCoinGeckoHeaders(), next: { revalidate: 3600 } }
         )
         const marketData = await marketRes.json()
         if (Array.isArray(marketData)) {
