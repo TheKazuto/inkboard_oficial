@@ -1,9 +1,4 @@
-import { defineCloudflareConfig, initOpenNextCloudflareForDev } from '@opennextjs/cloudflare'
 import type { NextConfig } from 'next'
-
-if (process.env.NODE_ENV === 'development') {
-  initOpenNextCloudflareForDev()
-}
 
 const nextConfig: NextConfig = {
   images: {
@@ -21,3 +16,6 @@ const nextConfig: NextConfig = {
 }
 
 export default nextConfig
+
+import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare'
+initOpenNextCloudflareForDev()
