@@ -1,0 +1,106 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { KNOWN_TOKENS, rpcBatch, buildBalanceOfCall } from '@/lib/ink'
+import { fetchPriceHistory } from '@/lib/priceService'
+
+export const revalidate = 0
+
+// ─── Balance fetching (single RPC batch) ─────────────────────────────────────
+async function fetchAllBalances(address: string): Promise<{
+  nativeBalance: number
+  tokens: number[]
+}> {
+  const nativeCall = {
+    jsonrpc: '2.0',
+    method:  'eth_getBalance',
+    params:  [address, 'latest'],
+    id:      'native',
+  }
+  const erc20Calls = KNOWN_TOKENS.map((t, i) => buildBalanceOfCall(t.contract, address, i))
+
+  try {
+    const results      = await rpcBatch([nativeCall, ...erc20Calls], 12_000)
+    const nativeResult = results.find((r: any) => r.id === 'native')
+    const nativeBalance       = nativeResult?.result
+      ? Number(BigInt(nativeResult.result)) / 1e18
+      : 0
+
+    const tokens = KNOWN_TOKENS.map((t, i) => {
+      const r   = results.find((x: any) => x.id === i)
+      const raw = r?.result
+      if (!raw || raw === '0x' || raw === '0x0' || raw === '0x' + '0'.repeat(64)) return 0
+      return Number(BigInt(raw)) / Math.pow(10, t.decimals)
+    })
+
+    return { nativeBalance, tokens }
+  } catch {
+    return { nativeBalance: 0, tokens: KNOWN_TOKENS.map(() => 0) }
+  }
+}
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
+export async function GET(req: NextRequest) {
+  const address = req.nextUrl.searchParams.get('address')
+
+  const VALID_DAYS = new Set([7, 30, 90, 180, 365])
+  const rawDays    = parseInt(req.nextUrl.searchParams.get('days') ?? '30', 10)
+  const days       = VALID_DAYS.has(rawDays) ? rawDays : 30
+
+  if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+    return NextResponse.json({ error: 'Invalid address' }, { status: 400 })
+  }
+
+  try {
+    // 1. Fetch all current balances in a single RPC batch
+    const { nativeBalance, tokens: tokenBalances } = await fetchAllBalances(address)
+
+    const balances: Record<string, number> = {}
+    if (nativeBalance > 0.0001) balances['ethereum'] = nativeBalance
+    KNOWN_TOKENS.forEach((t, i) => {
+      if (tokenBalances[i] > 0.0001) balances[t.coingeckoId] = tokenBalances[i]
+    })
+
+    const heldCoinIds = Object.keys(balances)
+    if (heldCoinIds.length === 0) {
+      return NextResponse.json({ history: [], totalValue: 0, change: 0 })
+    }
+
+    // 2. Fetch price history — now served from KV for all but the first caller per hour
+    const priceHistories = await Promise.all(
+      heldCoinIds.map(id => fetchPriceHistory(id, days))
+    )
+
+    // 3. Build daily portfolio value
+    const referenceHistory = priceHistories[0] ?? []
+    if (referenceHistory.length === 0) {
+      return NextResponse.json({ history: [], totalValue: 0, change: 0 })
+    }
+
+    const priceMaps = new Map<string, Map<string, number>>()
+    heldCoinIds.forEach((id, i) => {
+      const map = new Map<string, number>()
+      priceHistories[i].forEach(([ts, price]) => {
+        map.set(new Date(ts).toISOString().split('T')[0], price)
+      })
+      priceMaps.set(id, map)
+    })
+
+    const history: { date: string; value: number }[] = []
+    referenceHistory.forEach(([ts]) => {
+      const date = new Date(ts).toISOString().split('T')[0]
+      let totalValue = 0
+      for (const [coinId, balance] of Object.entries(balances)) {
+        totalValue += balance * (priceMaps.get(coinId)?.get(date) ?? 0)
+      }
+      history.push({ date, value: Math.round(totalValue * 100) / 100 })
+    })
+
+    const first  = history[0]?.value ?? 0
+    const last   = history[history.length - 1]?.value ?? 0
+    const change = first > 0 ? ((last - first) / first) * 100 : 0
+
+    return NextResponse.json({ history, totalValue: last, change })
+  } catch (err) {
+    console.error('[portfolio-history] error:', err)
+    return NextResponse.json({ error: 'Failed to fetch portfolio history' }, { status: 500 })
+  }
+}
