@@ -19,7 +19,7 @@ function fmtApr(apr: number): string {
 export default function LiveAprStrip() {
   const { top, loading, error } = useBestApr()
 
-  // Fallback content if API is down — keeps layout stable
+  // Fallback content if API is down; keeps layout stable.
   if (error && !top) {
     return (
       <div className="lp-strip" role="region" aria-label="Live yield on Ink">
@@ -105,6 +105,9 @@ const STRIP_CSS = `
   border-radius: 22px;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 70px -32px rgba(0, 0, 0, 0.7);
   font-family: 'Geist', system-ui, sans-serif;
+  /* Reserve enough vertical space for either the skeleton or the resolved
+     content so layout doesn't shift when /api/best-aprs lands. */
+  min-height: clamp(7.5rem, 10vw, 9rem);
 }
 @media (max-width: 760px) {
   .lp-strip { grid-template-columns: 1fr; gap: 1rem; padding: 1.4rem; }

@@ -153,7 +153,7 @@ export default function HeroDashboardMock() {
           <div className="lp-hmock-big">$24,318.92</div>
           <div className="lp-hmock-trend">
             <TrendingUp size={12} aria-hidden /> +$571.40 today &nbsp;·&nbsp;{' '}
-            <span style={{ color: '#5ee0a0' }}>+2.41%</span>
+            <span className="lp-hmock-trend-up">+2.41%</span>
           </div>
 
           <svg
@@ -255,8 +255,11 @@ export default function HeroDashboardMock() {
           font-family: 'Geist', system-ui, sans-serif;
           transform-origin: center;
           will-change: transform;
-          transition: transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+          /* Initial fade-in (replaces external Reveal wrapper) */
+          opacity: 0;
+          transition: opacity 700ms cubic-bezier(0.2, 0.7, 0.2, 1);
         }
+        .lp-hmock-in { opacity: 1; }
 
         .lp-hmock-chrome {
           display: flex;
@@ -355,6 +358,7 @@ export default function HeroDashboardMock() {
           align-items: center;
           gap: 0.3rem;
         }
+        .lp-hmock-trend-up { color: #5ee0a0; }
         .lp-hmock-spark {
           display: block;
           width: 100%;

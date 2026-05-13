@@ -33,19 +33,19 @@ const ECOSYSTEM_SECONDARY = ['InkySwap', 'Nado', 'Curve', 'Merkl', 'OpenSea'] as
 
 const CAPABILITIES = [
   {
-    eyebrow: '01 — Portfolio',
+    eyebrow: '01 · Portfolio',
     title: 'Every position you hold on Ink, in one view.',
     body: 'Tokens, NFTs, lending balances, liquidity. Aggregated and priced in real time. Read-only by default; nothing leaves your wallet.',
     mock: 'portfolio' as const,
   },
   {
-    eyebrow: '02 — Yields',
+    eyebrow: '02 · Yields',
     title: 'The best APR on Ink, refreshed every minute.',
     body: 'Velodrome, InkySwap, Tydro, Nado, Curve. Real APR, real TVL, ranked. No inflated reward math.',
     mock: 'yields' as const,
   },
   {
-    eyebrow: '03 — Swap & bridge',
+    eyebrow: '03 · Swap & bridge',
     title: 'Route across 70+ chains via LI.FI.',
     body: 'Best route from 360+ DEXes and bridges, quoted server-side. Sign in your wallet, watch the status, done.',
     mock: 'swap' as const,
@@ -114,9 +114,7 @@ export default function LandingPage() {
                 </div>
               </Reveal>
 
-              <Reveal delay={140}>
-                <HeroDashboardMock />
-              </Reveal>
+              <HeroDashboardMock />
             </div>
           </section>
 
@@ -475,7 +473,6 @@ const LANDING_CSS = `
 .lp-root button:focus-visible {
   outline: 2px solid #c2b4ff;
   outline-offset: 3px;
-  border-radius: 12px;
 }
 
 /* ── Header ── */
@@ -538,7 +535,7 @@ const LANDING_CSS = `
     border-color 0.18s;
   white-space: nowrap;
 }
-.lp-btn-lg { padding: 0.85rem 1.6rem; font-size: 1rem; }
+.lp-btn-lg { padding: 0.95rem 1.7rem; font-size: 1rem; }
 
 .lp-btn-primary {
   background: var(--lp-violet-2);
@@ -554,6 +551,12 @@ const LANDING_CSS = `
     0 1px 0 rgba(255, 255, 255, 0.22) inset,
     0 12px 36px -8px var(--lp-violet-glow);
 }
+.lp-btn-primary:active {
+  transform: translateY(0);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 4px 14px -4px var(--lp-violet-glow);
+}
 
 .lp-btn-ghost {
   background: transparent;
@@ -564,11 +567,15 @@ const LANDING_CSS = `
   background: rgba(131, 110, 249, 0.07);
   border-color: rgba(131, 110, 249, 0.5);
 }
+.lp-btn-ghost:active {
+  background: rgba(131, 110, 249, 0.12);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .lp-btn { transition: none; }
   .lp-btn-primary:hover,
-  .lp-btn-ghost:hover { transform: none; }
+  .lp-btn-ghost:hover,
+  .lp-btn-primary:active { transform: none; }
 }
 
 /* ── Sections ── */
