@@ -12,6 +12,7 @@ import {
 import Reveal from '@/components/landing/Reveal'
 import HeroDashboardMock from '@/components/landing/HeroDashboardMock'
 import LiveAprStrip from '@/components/landing/LiveAprStrip'
+import LaunchButton from '@/components/landing/LaunchButton'
 
 // ─── Static content ──────────────────────────────────────────────────────────
 
@@ -70,13 +71,12 @@ export default function LandingPage() {
               Ink<strong>Board</strong>
             </span>
           </Link>
-          <Link
-            href="/dashboard"
+          <LaunchButton
             className="lp-btn lp-btn-primary"
-            aria-label="Launch dashboard"
+            ariaLabel="Launch dashboard"
           >
             Launch Dashboard <ArrowRight size={16} aria-hidden />
-          </Link>
+          </LaunchButton>
         </header>
 
         <div className="lp-shell">
@@ -92,12 +92,9 @@ export default function LandingPage() {
                   Custody-free, built by Shinka Labs.
                 </p>
                 <div className="lp-hero-cta">
-                  <Link
-                    href="/dashboard"
-                    className="lp-btn lp-btn-primary lp-btn-lg"
-                  >
+                  <LaunchButton className="lp-btn lp-btn-primary lp-btn-lg">
                     Launch Dashboard <ArrowRight size={18} aria-hidden />
-                  </Link>
+                  </LaunchButton>
                   <a href="#capabilities" className="lp-btn lp-btn-ghost lp-btn-lg">
                     Explore features
                   </a>
@@ -268,12 +265,9 @@ export default function LandingPage() {
               <p className="lp-final-sub">
                 It&apos;s free. Connect your wallet when you&apos;re ready.
               </p>
-              <Link
-                href="/dashboard"
-                className="lp-btn lp-btn-primary lp-btn-lg lp-final-cta"
-              >
+              <LaunchButton className="lp-btn lp-btn-primary lp-btn-lg lp-final-cta">
                 Launch Dashboard <ArrowRight size={18} aria-hidden />
-              </Link>
+              </LaunchButton>
             </Reveal>
           </section>
 
@@ -607,7 +601,10 @@ const LANDING_CSS = `
 }
 .lp-hero-bg {
   position: absolute;
-  inset: -100px 0 0 0;
+  top: -100px;
+  bottom: 0;
+  left: calc(50% - 50vw);
+  right: calc(50% - 50vw);
   pointer-events: none;
   z-index: -1;
   overflow: hidden;
@@ -1046,4 +1043,27 @@ const LANDING_CSS = `
 
 /* ── Hide body theming on this page (landing is always dark) ── */
 .lp-root { color-scheme: dark; }
+
+/* ── Ink-wash transition (LaunchButton overdrive) ── */
+.lp-launching {
+  pointer-events: none;
+}
+.lp-launching::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: var(--lp-violet-2);
+  z-index: 9999;
+  pointer-events: none;
+  clip-path: circle(0% at var(--lp-ink-x, 50%) var(--lp-ink-y, 50%));
+  animation: lp-ink-wash 520ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  will-change: clip-path;
+}
+@keyframes lp-ink-wash {
+  0%   { clip-path: circle(0%   at var(--lp-ink-x, 50%) var(--lp-ink-y, 50%)); }
+  100% { clip-path: circle(150% at var(--lp-ink-x, 50%) var(--lp-ink-y, 50%)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-launching::after { animation: none; display: none; }
+}
 `
